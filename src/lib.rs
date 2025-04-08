@@ -1,5 +1,3 @@
-mod core;
-mod number;
+mod types;
 
-pub use core::*;
-pub use number::*;
+pub use types::*;
