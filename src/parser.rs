@@ -1,0 +1,2332 @@
+use std::{marker::PhantomData, time::Duration};
+
+use crate::Container;
+
+use super::{Error, History, Result, expression::*, lexor::Lexer};
+
+pub const SELECT: &str = "SELECT";
+pub const SELECT_SEP: &str = ",";
+pub const SELECT_ALIAS: &str = "AS";
+pub const FROM: &str = "FROM";
+pub const FROM_SEP: &str = ",";
+pub const WHERE: &str = "WHERE";
+pub const HAVING: &str = "HAVING";
+pub const GROUP: &str = "GROUP";
+pub const ORDER: &str = "ORDER";
+pub const BY: &str = "BY";
+pub const ORDER_ASC: &str = "ASC";
+pub const ORDER_DESC: &str = "DESC";
+pub const LIMIT: &str = "LIMIT";
+pub const INTERVAL: &str = "INTERVAL";
+pub const EVICT: &str = "EVICT";
+pub const EMIT: &str = "EMIT";
+pub const ON: &str = "ON";
+pub const SUB_CONDITION: &str = "(";
+pub const SUB_CONDITION_END: &str = ")";
+pub const EQUAL: &str = "=";
+pub const EQUAL_DOUBLE: &str = "==";
+pub const NOT_EQUAL: &str = "!=";
+pub const IN: &str = "IN";
+pub const GREATER_THAN: &str = ">";
+pub const LESS_THAN: &str = "<";
+pub const GREATER_THAN_EQUAL: &str = ">=";
+pub const LESS_THAN_EQUAL: &str = "<=";
+pub const AND: &str = "AND";
+pub const OR: &str = "OR";
+pub const NEGATE: &str = "!";
+pub const KEY_WRAP: &str = "`";
+pub const IDENTIFIER_WRAP: &str = "\"";
+pub const STRING_WRAP: &str = "'";
+pub const NULL: &str = "NULL";
+pub const TRUE: &str = "TRUE";
+pub const FALSE: &str = "FALSE";
+pub const MAP_WRAP: &str = "{";
+pub const MAP_WRAP_END: &str = "}";
+pub const MAP_CHILD_SET: &str = ":";
+pub const MAP_CHILD_SEP: &str = ",";
+pub const ARRAY_WRAP: &str = "[";
+pub const ARRAY_WRAP_END: &str = "]";
+pub const ARRAY_CHILD_SEP: &str = ",";
+
+pub const ADD: &str = "+";
+pub const MINUS: &str = "-";
+pub const MULTIPLY: &str = "*";
+pub const DIVIDE: &str = "/";
+pub const MODULUS: &str = "%";
+pub const EXPONENT: &str = "^";
+pub const SUB_EXPR_OPEN: &str = "(";
+pub const SUB_EXPR_CLOSE: &str = ")";
+
+pub const FN_OPEN: &str = "(";
+pub const FN_CLOSE: &str = ")";
+pub const FN_SEP: &str = ",";
+
+pub const FN_EXISTS: &str = "EXISTS";
+
+pub const AGGREGATION_SUM: &str = "SUM";
+pub const AGGREGATION_COUNT: &str = "COUNT";
+pub const AGGREGATION_AVG: &str = "AVG";
+
+// Column holds the aggregation and it's alias. It is the sum("key") as "sum"
+// part of a query. The alias is a path, since paths have the `Aquire` trait which
+// allows them to be created in a new dapt packet
+// #[derive(Clone)]
+// pub struct Column {
+//     agg: Box<dyn Aggregation>,
+//     alias: Path,
+// }
+
+// impl Column {
+//     pub fn new(agg: Box<dyn Aggregation>, alias: Path) -> Self {
+//         Self { agg, alias }
+//     }
+
+//     fn composable(&self) -> (Vec<Column>, Column) {
+//         let (composable, combine) = self.agg.composable(&self.alias);
+
+//         (
+//             composable,
+//             Column {
+//                 agg: combine,
+//                 alias: self.alias.clone(),
+//             },
+//         )
+//     }
+// }
+
+// impl Display for Column {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         write!(f, "{} AS {}", self.agg, self.alias)
+//     }
+// }
+
+// // Group by holds an array of expressions, which are the values we will group by,
+// // a template which holds a select clause to be cloned for each new unique set of
+// // group by values, and finally a hashmap, which holds a select clause for each group
+// // the key is a hash of the group by values.
+// #[derive(Clone)]
+// struct GroupBy {
+//     fields: Vec<Box<dyn Expression>>,
+//     // here we keep a key for the series of fields, and the
+//     // aggregation set we need to run for this series.
+//     template: SelectClause,
+//     groups: HashMap<u64, SelectClause>,
+// }
+
+// impl GroupBy {
+//     fn is_empty(&self) -> bool {
+//         self.fields.is_empty()
+//     }
+
+//     fn process(&mut self, d: &Dapt) {
+//         let mut hasher = Hasher::new();
+
+//         for field in self.fields.iter() {
+//             match field.evaluate(d) {
+//                 Some(val) => hasher.hash(&val),
+//                 None => hasher.hash(&Any::Null),
+//             }
+//         }
+
+//         let hash = hasher.finish();
+//         let group = if self.groups.contains_key(&hash) {
+//             self.groups.get_mut(&hash).unwrap()
+//         } else {
+//             let group = self.template.clone();
+//             self.groups.insert(hash, group);
+//             self.groups.get_mut(&hash).unwrap()
+//         };
+
+//         group.process(d);
+//     }
+
+//     fn collect(
+//         &mut self,
+//         having: &HavingClause,
+//         evict: &Evict,
+//         emit_on: &EmitOn,
+//     ) -> QueryResult<Vec<Dapt>> {
+//         let mut results = Vec::new();
+
+//         let on_evict = match emit_on {
+//             EmitOn::Evict => true,
+//             EmitOn::Interval => false,
+//         };
+
+//         // set the deadline to now - the eviction.
+//         // this creates a "static" timestamp so everything
+//         // after is measured against this time.
+//         let deadline = Instant::now() - evict.after;
+
+//         for group in self.groups.values_mut() {
+//             // if we are emiting on eviction, and the group
+//             // is not stale, we want to hold off on emiting
+//             // the data.
+//             if on_evict && !group.is_stale(deadline) {
+//                 continue;
+//             }
+
+//             // we are cleared to grab the data
+//             let d = group.collect()?;
+//             if d.empty() {
+//                 continue;
+//             }
+
+//             // make sure the point matches the filter.
+//             if having.filter(&d).unwrap_or(false) {
+//                 results.push(d)
+//             }
+//         }
+
+//         // remove everything that's stale
+//         self.groups.retain(|_k, v| !v.is_stale(deadline));
+
+//         Ok(results)
+//     }
+
+//     fn composable(&self) -> (GroupBy, GroupBy) {
+//         let (composable, combine) = self.template.composable();
+//         (
+//             GroupBy {
+//                 fields: self.fields.clone(),
+//                 template: composable,
+//                 groups: HashMap::new(),
+//             },
+//             GroupBy {
+//                 fields: self.fields.clone(),
+//                 template: combine,
+//                 groups: HashMap::new(),
+//             },
+//         )
+//     }
+// }
+
+// impl Display for GroupBy {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         if self.fields.is_empty() {
+//             return Ok(());
+//         }
+
+//         let mut first = true;
+//         write!(f, "GROUP BY ")?;
+
+//         for field in self.fields.iter() {
+//             if first {
+//                 first = false;
+//             } else {
+//                 write!(f, ", ")?;
+//             }
+
+//             write!(f, "{}", field)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
+// // OrderBy is used to sort the final result set. It holds a vector of OrderByColumn
+// // which is an expression and a direction
+// #[derive(Clone)]
+// struct OrderBy {
+//     fields: Vec<OrderByColumn>,
+// }
+
+// impl OrderBy {
+//     pub fn is_empty(&self) -> bool {
+//         self.fields.is_empty()
+//     }
+
+//     pub fn sort(&self, ds: &mut [Dapt]) {
+//         if self.is_empty() {
+//             return;
+//         }
+
+//         ds.sort_by(|a, b| {
+//             for order_column in self.fields.iter() {
+//                 let a = order_column.field.evaluate(a).unwrap_or(Any::Null);
+//                 let b = order_column.field.evaluate(b).unwrap_or(Any::Null);
+
+//                 let cmp = match order_column.direction {
+//                     OrderDirection::Ascending => a.partial_cmp(&b),
+//                     OrderDirection::Descending => b.partial_cmp(&a),
+//                 };
+
+//                 match cmp {
+//                     Some(ord) => match ord {
+//                         std::cmp::Ordering::Equal => continue,
+//                         _ => return ord,
+//                     },
+//                     None => continue,
+//                 }
+//             }
+
+//             std::cmp::Ordering::Equal
+//         });
+//     }
+// }
+
+// impl Display for OrderBy {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         if self.fields.is_empty() {
+//             return Ok(());
+//         }
+
+//         write!(f, "ORDER BY ")?;
+
+//         let mut first = true;
+//         for field in self.fields.iter() {
+//             if first {
+//                 first = false;
+//             } else {
+//                 write!(f, ", ")?;
+//             }
+
+//             write!(f, "{}", field.field)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
+// // OrderByColumn holds an expression and a direction, which is either ascending or
+// // descending
+// #[derive(Clone)]
+// struct OrderByColumn {
+//     field: Box<dyn Expression>,
+//     direction: OrderDirection,
+// }
+
+// impl Display for OrderByColumn {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         write!(f, "{} {}", self.field, self.direction)
+//     }
+// }
+
+// // OrderDirection is used for order by, Ascending or Descending
+// #[derive(Clone)]
+// enum OrderDirection {
+//     Ascending,
+//     Descending,
+// }
+
+// impl Display for OrderDirection {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         match self {
+//             OrderDirection::Ascending => write!(f, "ASC"),
+//             OrderDirection::Descending => write!(f, "DESC"),
+//         }
+//     }
+// }
+
+// // Limit is used at the very end, when used with Order By it can be used to get
+// // a limited subset of the values returned by the query.
+// #[derive(Clone)]
+// struct Limit {
+//     count: usize,
+// }
+
+// impl Display for Limit {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         write!(f, "{} {}", LIMIT, self.count)
+//     }
+// }
+
+// // From isn't really used, at least within the query, but it is optionally
+// // available in the query so it can be used outside to pull in appropriate
+// // data. It allows for specifying multiple sources.
+// #[derive(Clone)]
+// struct FromClause(Vec<String>);
+
+// impl FromClause {
+//     #[allow(dead_code)]
+//     pub fn new(str: &str) -> QueryResult<FromClause> {
+//         let mut parser = Parser::from(str);
+//         parser.parse_from()
+//     }
+// }
+
+// impl Display for FromClause {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         if self.0.is_empty() {
+//             return Ok(());
+//         }
+
+//         write!(f, "FROM ")?;
+
+//         let mut first = true;
+//         for source in self.0.iter() {
+//             if first {
+//                 first = false;
+//             } else {
+//                 write!(f, ", ")?;
+//             }
+
+//             write!(f, "{}", source)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
+// #[derive(Clone)]
+// struct Interval {
+//     last_output: Instant,
+//     duration: Duration,
+// }
+
+// impl Interval {
+//     fn is_set(&self) -> bool {
+//         !self.duration.is_zero()
+//     }
+
+//     fn should_fire_and_reset(&mut self) -> bool {
+//         let now = Instant::now();
+//         let elapsed = now.duration_since(self.last_output);
+
+//         if elapsed >= self.duration {
+//             self.last_output = now;
+//             return true;
+//         }
+
+//         false
+//     }
+// }
+
+// impl Display for Interval {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         if !self.is_set() {
+//             return Ok(());
+//         }
+
+//         // TODO: you need some proper to stringing here
+//         write!(f, "{INTERVAL} {STRING_WRAP}TODO{STRING_WRAP}")
+//     }
+// }
+
+// #[derive(Clone)]
+// struct Evict {
+//     after: Duration,
+// }
+
+// #[derive(Clone)]
+// enum EmitOn {
+//     Interval,
+//     Evict,
+// }
+
+// impl Default for EmitOn {
+//     fn default() -> Self {
+//         EmitOn::Interval
+//     }
+// }
+
+// Query is the parsed representation of a query. It holds a from, where, having
+// group by (which houses the select clause), order by and limit. The only thing required
+// to parse a query is the `SELECT` portion of the query. The rest is optional.
+// if not specified a No Op where, having, group by, order by are created.
+// #[derive(Clone)]
+// pub struct Query {
+//     from: FromClause,
+//     wherre: WhereClause,
+//     having: HavingClause,
+//     group: GroupBy,
+//     order: OrderBy,
+//     limit: Option<Limit>,
+//     interval: Interval,
+//     evict: Evict,
+//     emit_on: EmitOn,
+// }
+
+// impl Query {
+//     pub fn new(str: &str) -> QueryResult<Query> {
+//         let mut parser = Parser::from(str);
+//         parser.parse_query()
+//     }
+
+//     pub fn process(&mut self, d: &Dapt) -> QueryResult<()> {
+//         if self.wherre.filter(d)? {
+//             self.group.process(d);
+//         }
+//         Ok(())
+//     }
+
+//     pub fn collect(&mut self) -> QueryResult<Vec<Dapt>> {
+//         let mut set = self
+//             .group
+//             .collect(&self.having, &self.evict, &self.emit_on)?;
+//         self.order.sort(&mut set);
+
+//         if let Some(limit) = &self.limit {
+//             set.truncate(limit.count);
+//         }
+
+//         Ok(set)
+//     }
+
+//     // process_and_collect utilizes the defined interval to determine if the
+//     // query should return data. If there is no data to return option will be
+//     // none
+//     pub fn process_and_collect(&mut self, d: &Dapt) -> QueryResult<Option<Vec<Dapt>>> {
+//         self.process(d)?;
+//         if self.interval.should_fire_and_reset() {
+//             Ok(Some(self.collect()?))
+//         } else {
+//             Ok(None)
+//         }
+//     }
+
+//     // composite returns two query objects, The first query can be
+//     // run on multiple data sets concurrently, the second query
+//     // is then used to combine the responses of the first query into
+//     // the final answer the initial query was looking for.
+//     pub fn composite(&self) -> (Query, Query) {
+//         let (composable, combine) = self.group.composable();
+//         (
+//             // having, order by and limit can only be done at the combine step
+//             Query {
+//                 from: self.from.clone(),
+//                 wherre: self.wherre.clone(),
+//                 having: HavingClause {
+//                     condition: Conjunction::Single(Box::new(NoopCondition::default())),
+//                 },
+//                 group: composable,
+//                 order: OrderBy { fields: Vec::new() },
+//                 limit: None,
+//                 interval: self.interval.clone(),
+//                 evict: self.evict.clone(),
+//                 // we use interval here so that the combiner query doesn't return
+//                 // early on data.
+//                 emit_on: EmitOn::Interval,
+//             },
+//             // where can only be done at the composable step
+//             Query {
+//                 from: self.from.clone(),
+//                 wherre: WhereClause {
+//                     condition: Conjunction::Single(Box::new(NoopCondition::default())),
+//                 },
+//                 having: self.having.clone(),
+//                 group: combine,
+//                 order: self.order.clone(),
+//                 limit: self.limit.clone(),
+//                 interval: self.interval.clone(),
+//                 evict: self.evict.clone(),
+//                 emit_on: self.emit_on.clone(),
+//             },
+//         )
+//     }
+// }
+
+// impl Display for Query {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         write!(f, "{}", self.group.template)?;
+
+//         if !self.from.0.is_empty() {
+//             write!(f, " {}", self.from)?;
+//         }
+
+//         if !self.wherre.is_empty() {
+//             write!(f, " {}", self.wherre)?;
+//         }
+
+//         if !self.having.is_empty() {
+//             write!(f, " {}", self.having)?;
+//         }
+
+//         if !self.group.is_empty() {
+//             write!(f, " {}", self.group)?;
+//         }
+
+//         if !self.order.is_empty() {
+//             write!(f, " {}", self.order)?;
+//         }
+
+//         if self.limit.is_some() {
+//             write!(f, " {}", self.limit.as_ref().unwrap())?;
+//         }
+
+//         if self.interval.is_set() {
+//             write!(f, " {}", self.interval)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
+// // SELECT takes both expressions and aggregations. Any expressions will be wrapped
+// // in an ExpressionAggregation which will grab the first value expressed and then
+// // return OK from then on. If your query is a transformation, or in other words, only
+// // expressions, you should call collect on each call to process. If your query is an
+// // aggregation you can call process whenever you want the calculation to be done.
+// // Many aggregations are set back to 0 or the default value after process is called.
+// // so you can continue to use Select after collect is called.
+// #[derive(Clone)]
+// pub struct SelectClause {
+//     last_updated: Instant,
+//     fields: Vec<Column>,
+// }
+
+// impl SelectClause {
+//     pub fn new(str: &str) -> QueryResult<SelectClause> {
+//         let mut parser = Parser::from(str);
+//         parser.parse_select()
+//     }
+
+//     pub fn process(&mut self, d: &Dapt) {
+//         // set the last update time forward a bit
+//         self.last_updated = Instant::now();
+
+//         for col in self.fields.iter_mut() {
+//             col.agg.process(d);
+//         }
+//     }
+
+//     pub fn collect(&mut self) -> QueryResult<Dapt> {
+//         let mut d = DaptBuilder::new();
+//         for col in self.fields.iter_mut() {
+//             if let Some(value) = col.agg.result() {
+//                 d.set_any_path(&col.alias, value)?;
+//             }
+//         }
+
+//         Ok(d.build())
+//     }
+
+//     // is_stale returns if the group is out of date or not.
+//     pub fn is_stale(&self, deadline: Instant) -> bool {
+//         self.last_updated <= deadline
+//     }
+
+//     pub fn composable(&self) -> (SelectClause, SelectClause) {
+//         let mut composable = SelectClause {
+//             fields: Vec::new(),
+//             last_updated: Instant::now(),
+//         };
+//         let mut combine = SelectClause {
+//             fields: Vec::new(),
+//             last_updated: Instant::now(),
+//         };
+
+//         for col in self.fields.iter() {
+//             let (com, comb) = col.composable();
+//             for c in com {
+//                 composable.fields.push(c);
+//             }
+//             combine.fields.push(comb);
+//         }
+
+//         (composable, combine)
+//     }
+
+//     // alias_of returns a clone of the underlying expression that the
+//     // expression passed in is aliasing. It returns nothing if the
+//     // expressions provided does not match a selected column
+//     pub fn alias_of(&self, expr: &Box<dyn Expression>) -> QueryResult<Box<dyn Expression>> {
+//         for col in self.fields.iter() {
+//             if col.alias.to_string() == expr.to_string() {
+//                 return col.agg.expression();
+//             }
+//         }
+
+//         Err(Error::NotFound)
+//     }
+// }
+
+// impl Display for SelectClause {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         write!(f, "{} ", SELECT)?;
+
+//         let mut first = true;
+//         for field in self.fields.iter() {
+//             if first {
+//                 first = false;
+//             } else {
+//                 write!(f, "{} ", SELECT_SEP)?;
+//             }
+
+//             write!(f, "{}", field)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
+// // Conjunctions are used to combine conditions. So you can have a == b AND c == d
+// // Conjuctions are a single condition, or an AND or OR of two conditions.
+// #[derive(Clone)]
+// enum Conjunction {
+//     Single(Box<dyn Condition>),
+//     And {
+//         left: Box<dyn Condition>,
+//         right: Box<dyn Condition>,
+//     },
+//     Or {
+//         left: Box<dyn Condition>,
+//         right: Box<dyn Condition>,
+//     },
+// }
+
+// impl Conjunction {
+//     // promote_and consumes the existing conjunction and places it in
+//     // the left side of a new AND conjunction.
+//     fn promote_and(self, right: Box<dyn Condition>) -> Conjunction {
+//         Conjunction::And {
+//             left: Box::new(self),
+//             right,
+//         }
+//     }
+
+//     // promote_and consumes the existing conjunction and places it in
+//     // the left side of a new OR conjunction.
+//     fn promote_or(self, right: Box<dyn Condition>) -> Conjunction {
+//         Conjunction::Or {
+//             left: Box::new(self),
+//             right,
+//         }
+//     }
+
+//     // no_op checks to see if the underlying conjuction is a no op.
+//     fn no_op(&self) -> bool {
+//         match self {
+//             Conjunction::Single(c) => c.no_op(),
+//             _ => false,
+//         }
+//     }
+// }
+
+// impl Display for Conjunction {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         match self {
+//             Conjunction::Single(c) => write!(f, "{}", c),
+//             Conjunction::And { left, right } => write!(f, "{} AND {}", left, right),
+//             Conjunction::Or { left, right } => write!(f, "{} OR {}", left, right),
+//         }
+//     }
+// }
+
+// impl Condition for Conjunction {
+//     fn evaluate(&self, d: &Dapt) -> QueryResult<bool> {
+//         match self {
+//             Conjunction::Single(c) => c.evaluate(d),
+//             Conjunction::And { left, right } => Ok(left.evaluate(d)? && right.evaluate(d)?),
+//             Conjunction::Or { left, right } => Ok(left.evaluate(d)? || right.evaluate(d)?),
+//         }
+//     }
+// }
+
+// // WhereClause is used to filter dapt packets before passing into an aggregation.
+// // The clause is just a conjuntion, which creates a left right tree of conditions.
+// // it exists to provide a public interface to the conjunction
+// #[derive(Clone)]
+// pub struct WhereClause {
+//     condition: Conjunction,
+// }
+
+// impl WhereClause {
+//     pub fn new(str: &str) -> QueryResult<WhereClause> {
+//         let mut parser = Parser::from(str);
+//         parser.parse_where()
+//     }
+
+//     pub fn filter(&self, d: &Dapt) -> QueryResult<bool> {
+//         self.condition.evaluate(d)
+//     }
+
+//     pub fn is_empty(&self) -> bool {
+//         self.condition.no_op()
+//     }
+// }
+
+// impl Display for WhereClause {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         if !self.condition.no_op() {
+//             write!(f, "{} {}", WHERE, self.condition)
+//         } else {
+//             Ok(())
+//         }
+//     }
+// }
+
+// // HavingClause is used to filter dapt packets after passing through an aggregation.
+// // The clause is just a conjuntion, which creates a left right tree of conditions.
+// // it exists to provide a public interface to the conjunction
+// #[derive(Clone)]
+// pub struct HavingClause {
+//     condition: Conjunction,
+// }
+
+// impl HavingClause {
+//     pub fn filter(&self, d: &Dapt) -> QueryResult<bool> {
+//         self.condition.evaluate(d)
+//     }
+
+//     pub fn is_empty(&self) -> bool {
+//         self.condition.no_op()
+//     }
+// }
+
+// impl Display for HavingClause {
+//     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+//         if !self.condition.no_op() {
+//             write!(f, "{} {}", HAVING, self.condition)
+//         } else {
+//             Ok(())
+//         }
+//     }
+// }
+
+// Parser is used to parse a query string into a query struct, it produces all
+// sorts of interior structs as well.
+pub struct Parser<'a, T: Container> {
+    lex: Lexer<'a>,
+    _p: PhantomData<T>,
+}
+
+// impl<'a> From<&'a str> for Parser<'a> {
+//     fn from(s: &'a str) -> Parser<'a> {
+//         Parser {
+//             lex: Lexer::from(s),
+//         }
+//     }
+// }
+
+impl<'a, T: Container> Parser<'a, T> {
+    pub fn peak(&mut self) -> Option<&str> {
+        self.lex.peak()
+    }
+
+    pub fn token(&mut self) -> Option<&str> {
+        self.lex.token()
+    }
+
+    pub fn must_token(&mut self) -> Result<&str> {
+        self.lex.token().ok_or_else(|| Error::UnexpectedEOF)
+    }
+
+    pub fn consumed(&self) -> History {
+        History::new(self.lex.consumed(), self.lex.future())
+    }
+
+    // pub fn parse_query(&mut self) -> QueryResult<Query> {
+    //     let select = self.parse_select()?;
+
+    //     // from is optional, so we can create an empty from cluase
+    //     // if there is no value.
+    //     let from = if self.is_next(FROM) {
+    //         self.parse_from()?
+    //     } else {
+    //         FromClause(Vec::new())
+    //     };
+
+    //     // where is optional, so we can create an empty where cluase
+    //     // if there is no value.
+    //     let where_clause = if self.is_next(WHERE) {
+    //         self.parse_where()?
+    //     } else {
+    //         WhereClause {
+    //             condition: Conjunction::Single(Box::new(NoopCondition::default())),
+    //         }
+    //     };
+
+    //     // having is also optional
+    //     let having = if self.is_next(HAVING) {
+    //         self.parse_having()?
+    //     } else {
+    //         HavingClause {
+    //             condition: Conjunction::Single(Box::new(NoopCondition::default())),
+    //         }
+    //     };
+
+    //     let group = if self.is_next(GROUP) {
+    //         self.parse_group(select)?
+    //     } else {
+    //         let mut groups = HashMap::new();
+    //         groups.insert(0, select.clone());
+
+    //         GroupBy {
+    //             fields: Vec::new(),
+    //             groups,
+    //             template: select,
+    //         }
+    //     };
+
+    //     let order = if self.is_next(ORDER) {
+    //         self.parse_order()?
+    //     } else {
+    //         OrderBy { fields: Vec::new() }
+    //     };
+
+    //     let limit = if self.is_next(LIMIT) {
+    //         Some(self.parse_limit()?)
+    //     } else {
+    //         None
+    //     };
+
+    //     let interval = if self.is_next(INTERVAL) {
+    //         self.parse_interval()?
+    //     } else {
+    //         Interval {
+    //             last_output: Instant::now(),
+    //             duration: Duration::from_secs(0),
+    //         }
+    //     };
+
+    //     let evict = if self.is_next(EVICT) {
+    //         self.parse_evict()?
+    //     } else {
+    //         Evict {
+    //             after: interval.duration,
+    //         }
+    //     };
+
+    //     let emit_on = if self.is_next(EMIT) {
+    //         self.parse_emit_on()?
+    //     } else {
+    //         EmitOn::default()
+    //     };
+
+    //     let leftovers = self.lex.future().trim();
+    //     if !leftovers.is_empty() {
+    //         return Err(Error::with_history(
+    //             &format!("unexpected trailing content: {}", leftovers),
+    //             self.consumed(),
+    //         ));
+    //     }
+
+    //     Ok(Query {
+    //         from,
+    //         wherre: where_clause,
+    //         having,
+    //         group,
+    //         order,
+    //         limit,
+    //         interval,
+    //         evict,
+    //         emit_on,
+    //     })
+    // }
+
+    // fn parse_interval(&mut self) -> QueryResult<Interval> {
+    //     self.consume_next(INTERVAL)?;
+    //     let duration = self.parse_duration(STRING_WRAP)?;
+
+    //     Ok(Interval {
+    //         last_output: Instant::now(),
+    //         duration,
+    //     })
+    // }
+
+    // fn parse_limit(&mut self) -> QueryResult<Limit> {
+    //     self.consume_next(LIMIT)?;
+    //     let count = self.parse_positive_number()?;
+    //     Ok(Limit { count })
+    // }
+
+    // fn parse_evict(&mut self) -> QueryResult<Evict> {
+    //     self.consume_next(EVICT)?;
+    //     let duration = self.parse_duration(STRING_WRAP)?;
+    //     Ok(Evict { after: duration })
+    // }
+
+    // fn parse_emit_on(&mut self) -> QueryResult<EmitOn> {
+    //     self.consume_next(EMIT)?;
+    //     self.consume_next(ON)?;
+
+    //     let tok = self.must_token()?;
+    //     let tok = tok.to_uppercase();
+    //     match &tok[..] {
+    //         INTERVAL => Ok(EmitOn::Interval),
+    //         EVICT => Ok(EmitOn::Evict),
+    //         _ => Err(Error::InvalidQuery(format!(
+    //             "unknown emit on directive {}",
+    //             tok
+    //         ))),
+    //     }
+    // }
+
+    pub fn continue_if(&mut self, tok: &str) -> bool {
+        let peaked = self.lex.peak().unwrap_or_default();
+        if peaked.to_uppercase() == tok {
+            self.consume();
+            true
+        } else {
+            false
+        }
+    }
+
+    // fn parse_group(&mut self, select: SelectClause) -> QueryResult<GroupBy> {
+    //     self.consume_next(GROUP)?;
+    //     self.consume_next(BY)?;
+
+    //     let mut fields = Vec::new();
+    //     let groups = HashMap::new();
+
+    //     loop {
+    //         let alias = self.expression()?;
+    //         let expr = match select.alias_of(&alias) {
+    //             Ok(expr) => Ok(expr), // the alias was of an expression in the select clause
+    //             Err(Error::NotFound) => Ok(alias), // the alias is an expression, not in the select
+    //             Err(err) => Err(err), // there was a real error
+    //         }?;
+
+    //         fields.push(expr);
+
+    //         if !self.continue_if(FROM_SEP) {
+    //             break;
+    //         }
+    //     }
+
+    //     Ok(GroupBy {
+    //         fields,
+    //         groups,
+    //         template: select,
+    //     })
+    // }
+
+    // fn parse_order(&mut self) -> QueryResult<OrderBy> {
+    //     self.consume_next(ORDER)?;
+    //     self.consume_next(BY)?;
+
+    //     let mut fields = Vec::new();
+    //     loop {
+    //         let expr = self.expression()?;
+
+    //         match self.lex.peak() {
+    //             Some(ORDER_ASC) => {
+    //                 fields.push(OrderByColumn {
+    //                     field: expr,
+    //                     direction: OrderDirection::Ascending,
+    //                 });
+    //                 self.consume_next(ORDER_ASC)?;
+    //             }
+    //             Some(ORDER_DESC) => {
+    //                 fields.push(OrderByColumn {
+    //                     field: expr,
+    //                     direction: OrderDirection::Descending,
+    //                 });
+    //                 self.consume_next(ORDER_DESC)?;
+    //             }
+    //             _ => fields.push(OrderByColumn {
+    //                 field: expr,
+    //                 direction: OrderDirection::Ascending,
+    //             }),
+    //         }
+
+    //         if !self.continue_if(FROM_SEP) {
+    //             break;
+    //         }
+    //     }
+
+    //     Ok(OrderBy { fields })
+    // }
+
+    // fn parse_from(&mut self) -> QueryResult<FromClause> {
+    //     self.consume_next(FROM)?;
+
+    //     let mut sources = Vec::new();
+
+    //     sources.push(self.parse_identifier(IDENTIFIER_WRAP)?);
+    //     while self.continue_if(FROM_SEP) {
+    //         sources.push(self.parse_identifier(IDENTIFIER_WRAP)?);
+    //     }
+
+    //     Ok(FromClause(sources))
+    // }
+
+    // pub fn parse_select(&mut self) -> QueryResult<SelectClause> {
+    //     self.consume_next(SELECT)?;
+
+    //     let mut fields = Vec::new();
+    //     fields.push(self.parse_column()?);
+
+    //     while self.continue_if(SELECT_SEP) {
+    //         fields.push(self.parse_column()?);
+    //     }
+
+    //     Ok(SelectClause {
+    //         fields,
+    //         last_updated: Instant::now(),
+    //     })
+    // }
+
+    // // TODO: you need to change this to a key.
+    // pub fn parse_column(&mut self) -> QueryResult<Column> {
+    //     let agg = self.aggregation()?;
+
+    //     let alias = if self.is_next(SELECT_ALIAS) {
+    //         self.consume();
+    //         self.parse_key()?
+    //     } else {
+    //         let field = FieldLiteral::from_escaped(&format!("{}", agg));
+    //         Path::from(vec![Node::FieldLiteral(field)])
+    //     };
+
+    //     if !alias.is_settable() {
+    //         return Err(Error::InvalidQuery(format!(
+    //             "{} is not a settable alias",
+    //             alias
+    //         )));
+    //     }
+
+    //     Ok(Column { agg, alias })
+    // }
+
+    // parse_key will parse a valid key from the parser.
+    // pub fn parse_key(&mut self) -> QueryResult<Path> {
+    //     let is_wrapped = self.is_next(KEY_WRAP);
+    //     if is_wrapped {
+    //         self.consume();
+    //     }
+
+    //     let mut path_parser = PathParser::from(self.future());
+    //     let path = path_parser.parse()?;
+    //     self.advance_by(path_parser.chars_consumed());
+
+    //     if is_wrapped {
+    //         self.consume_next(KEY_WRAP)?;
+    //     }
+
+    //     Ok(path)
+    // }
+
+    // pub fn aggregation(&mut self) -> QueryResult<Box<dyn Aggregation>> {
+    //     self.parse_aggregation_add()
+    // }
+
+    // fn parse_aggregation_add(&mut self) -> QueryResult<Box<dyn Aggregation>> {
+    //     let mut expr = self.parse_aggregation_multiply()?;
+
+    //     loop {
+    //         let next = self.peak().unwrap_or_default();
+    //         match next {
+    //             ADD => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation_multiply()?;
+    //                 expr = Box::new(AddAggregation::new(expr, right))
+    //             }
+    //             MINUS => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation_multiply()?;
+    //                 expr = Box::new(SubtractAggregation::new(expr, right))
+    //             }
+    //             _ => break,
+    //         }
+    //     }
+
+    //     Ok(expr)
+    // }
+
+    // fn parse_aggregation_multiply(&mut self) -> QueryResult<Box<dyn Aggregation>> {
+    //     let mut expr = self.parse_aggregation_exponent()?;
+
+    //     loop {
+    //         let next = self.peak().unwrap_or_default();
+    //         match next {
+    //             MULTIPLY => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation_exponent()?;
+    //                 expr = Box::new(MultiplyAggregation::new(expr, right))
+    //             }
+    //             DIVIDE => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation_exponent()?;
+    //                 expr = Box::new(DivideAggregation::new(expr, right))
+    //             }
+    //             MODULUS => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation_exponent()?;
+    //                 expr = Box::new(ModulusAggregation::new(expr, right))
+    //             }
+    //             _ => break,
+    //         }
+    //     }
+
+    //     Ok(expr)
+    // }
+
+    // fn parse_aggregation_exponent(&mut self) -> QueryResult<Box<dyn Aggregation>> {
+    //     let mut expr = self.parse_aggregation()?;
+
+    //     loop {
+    //         let next = self.peak().unwrap_or_default();
+    //         match next {
+    //             EXPONENT => {
+    //                 self.consume();
+    //                 let right = self.parse_aggregation()?;
+    //                 expr = Box::new(ExponentAggregation::new(expr, right))
+    //             }
+    //             _ => break,
+    //         }
+    //     }
+
+    //     Ok(expr)
+    // }
+
+    // fn parse_aggregation(&mut self) -> QueryResult<Box<dyn Aggregation>> {
+    //     let tok = self.peak().unwrap_or_default();
+
+    //     match tok.to_uppercase().as_str() {
+    //         SUB_EXPR_OPEN => {
+    //             self.consume();
+    //             let expr = self.aggregation()?;
+    //             self.consume_next(SUB_EXPR_CLOSE)?;
+    //             Ok(Box::new(SubAggregation::new(expr)))
+    //         }
+    //         AGGREGATION_SUM => Ok(Box::new(SumAggregation::from_parser(self)?)),
+    //         AGGREGATION_COUNT => Ok(Box::new(CountAggregation::from_parser(self)?)),
+    //         AGGREGATION_AVG => Ok(Box::new(AvgAggregation::from_parser(self)?)),
+    //         AGGREGATION_CUMULATIVE_SUM => Ok(Box::new(CumulativeSum::from_parser(self)?)),
+    //         AGGREGATION_MIN => Ok(Box::new(MinAggregation::from_parser(self)?)),
+    //         AGGREGATION_MAX => Ok(Box::new(MaxAggregation::from_parser(self)?)),
+    //         _ => {
+    //             let agg = ExpressionAggregation::from_parser(self)?;
+
+    //             if self.is_next(FN_OPEN) {
+    //                 return Err(Error::InvalidQuery(format!("unknown function {}", agg)));
+    //             }
+
+    //             Ok(Box::new(agg))
+    //         }
+    //     }
+    // }
+
+    // pub fn parse_having(&mut self) -> QueryResult<HavingClause> {
+    //     let tok = self
+    //         .lex
+    //         .token()
+    //         .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+    //     match tok {
+    //         HAVING => Ok(HavingClause {
+    //             condition: self.parse_conjunction()?,
+    //         }),
+    //         _ => Err(Error::with_history("expected HAVING", self.consumed())),
+    //     }
+    // }
+
+    // pub fn parse_where(&mut self) -> QueryResult<WhereClause> {
+    //     let tok = self
+    //         .lex
+    //         .token()
+    //         .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+    //     match tok {
+    //         WHERE => Ok(WhereClause {
+    //             condition: self.parse_conjunction()?,
+    //         }),
+    //         _ => Err(Error::with_history("expected WHERE", self.consumed())),
+    //     }
+    // }
+
+    // // parse_conjunction is a recursive descent parser that parses a conjunction
+    // // of conditions. It is a simple parser that only supports AND and OR
+    // // conjunctions.
+    // fn parse_conjunction(&mut self) -> QueryResult<Conjunction> {
+    //     // start by parsing the first condition and placing it in a single conjuction
+    //     // so assume the condition is a == b
+    //     let mut conj = Conjunction::Single(self.parse_condition()?);
+
+    //     // then we loop to find a chain of AND OR conjunctions
+    //     loop {
+    //         // peak so we don't consume the token
+    //         let tok = match self.lex.peak() {
+    //             Some(t) => t,
+    //             None => break,
+    //         };
+
+    //         // If we are in an AND or OR we can consume that token, and then
+    //         // parse the right side. Once we do that successfully we can promote
+    //         // whatever conjuction we have to the left.
+    //         match tok {
+    //             AND => {
+    //                 let _ = self.lex.token(); // consume the AND token
+    //                 let right = self.parse_condition()?;
+    //                 conj = conj.promote_and(right);
+    //             }
+    //             OR => {
+    //                 let _ = self.lex.token(); // consume the OR token
+    //                 let right = self.parse_conjunction()?;
+    //                 conj = conj.promote_or(Box::new(right));
+    //             }
+    //             // if we get something else we just break... this allows us
+    //             // to validate the exit token outside the context of parsing
+    //             // a conjunction
+    //             _ => break,
+    //         }
+    //     }
+
+    //     Ok(conj)
+    // }
+
+    // // parse_condition will parse a single condition in the where clause, like
+    // // "a" == 10 This also supports Sub conditions like (a == 10 AND b == 20) by
+    // // calling up to parse_conjunction
+    // pub fn parse_condition(&mut self) -> QueryResult<Box<dyn Condition>> {
+    //     // check for EOF or a subcondition
+    //     match self.lex.peak() {
+    //         None => return Err(Error::unexpected_eof(self.consumed())),
+    //         Some(SUB_CONDITION) => {
+    //             let _ = self.lex.token(); // consume the (
+    //             let condition = self.parse_conjunction()?;
+
+    //             match self.lex.token() {
+    //                 None => return Err(Error::unexpected_eof(self.consumed())),
+    //                 Some(SUB_CONDITION_END) => (),
+    //                 _ => return Err(Error::with_history("expected )", self.consumed())),
+    //             }
+
+    //             return Ok(Box::new(condition));
+    //         }
+    //         Some(NEGATE) => {
+    //             self.consume();
+    //             let condition = self.parse_condition()?;
+    //             return Ok(Box::new(NegateCondition::new(condition)));
+    //         }
+    //         _ => (),
+    //     };
+
+    //     let left = self.expression()?;
+
+    //     let tok = match self.lex.peak() {
+    //         None => return Ok(Box::new(DefaultExpressCondition::new(left))),
+    //         Some(t) => t,
+    //     };
+
+    //     match tok.to_uppercase().as_str() {
+    //         EQUAL | EQUAL_DOUBLE => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{EQUAL} expects expressions on both sides").as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(EqualsCondition::new(left, right)))
+    //         }
+    //         NOT_EQUAL => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{NOT_EQUAL} expects expressions on both sides").as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(NotEqualsCondition::new(left, right)))
+    //         }
+    //         GREATER_THAN => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{GREATER_THAN} expects expressions on both sides").as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(GreaterThanCondition::new(left, right)))
+    //         }
+    //         GREATER_THAN_EQUAL => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{GREATER_THAN_EQUAL} expects expressions on both sides")
+    //                             .as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(GreaterThanEqualCondition::new(left, right)))
+    //         }
+    //         LESS_THAN => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         "equals expects expressions on both sides",
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(LessThanCondition::new(left, right)))
+    //         }
+    //         LESS_THAN_EQUAL => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{LESS_THAN_EQUAL} expects expressions on both sides").as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(LessThanEqualCondition::new(left, right)))
+    //         }
+    //         IN => {
+    //             let _ = self.token(); // consume the token
+    //             let right = match self.expression() {
+    //                 Err(Error::UnexpectedEOF(_)) => {
+    //                     return Err(Error::with_history(
+    //                         format!("{IN} expects expressions on both sides").as_str(),
+    //                         self.consumed(),
+    //                     ));
+    //                 }
+    //                 Err(e) => return Err(e),
+    //                 Ok(r) => r,
+    //             };
+
+    //             Ok(Box::new(InCondition::new(left, right)))
+    //         }
+    //         // if this doesn't match any of these, we can assume this is a unary operation
+    //         _ => Ok(Box::new(DefaultExpressCondition::new(left))),
+    //     }
+    // }
+
+    pub fn expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+        self.parse_expression_add()
+    }
+
+    fn parse_expression_add(&mut self) -> Result<Box<dyn Expression<T>>> {
+        let mut expr = self.parse_expression_multiply()?;
+
+        loop {
+            let next = self.peak().unwrap_or_default();
+            match next {
+                ADD => {
+                    self.consume();
+                    let right = self.parse_expression_multiply()?;
+                    expr = Box::new(AddExpression::new(expr, right))
+                }
+                MINUS => {
+                    self.consume();
+                    let right = self.parse_expression_multiply()?;
+                    expr = Box::new(SubtractExpression::new(expr, right))
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_expression_multiply(&mut self) -> Result<Box<dyn Expression<T>>> {
+        let mut expr = self.parse_expression_exponent()?;
+
+        loop {
+            let next = self.peak().unwrap_or_default();
+            match next {
+                MULTIPLY => {
+                    self.consume();
+                    let right = self.parse_expression_exponent()?;
+                    expr = Box::new(MultiplyExpression::new(expr, right))
+                }
+                DIVIDE => {
+                    self.consume();
+                    let right = self.parse_expression_exponent()?;
+                    expr = Box::new(DivideExpression::new(expr, right))
+                }
+                MODULUS => {
+                    self.consume();
+                    let right = self.parse_expression_exponent()?;
+                    expr = Box::new(ModulusExpression::new(expr, right))
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_expression_exponent(&mut self) -> Result<Box<dyn Expression<T>>> {
+        let mut expr = self.parse_expression()?;
+
+        loop {
+            let next = self.peak().unwrap_or_default();
+            match next {
+                EXPONENT => {
+                    self.consume();
+                    let right = self.parse_expression()?;
+                    expr = Box::new(ExponentExpression::new(expr, right))
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+        let left = self.peak().unwrap_or_default();
+
+        match left.to_uppercase().as_str() {
+            SUB_EXPR_OPEN => {
+                self.consume();
+                let expr = self.expression()?;
+                self.consume_next(SUB_EXPR_CLOSE)?;
+                Ok(Box::new(SubExpression::new(expr)))
+            }
+            // KEY_WRAP => Ok(Box::new(PathExpression::from_parser(self)?)),
+            // STRING_WRAP => Ok(Box::new(StringExpression::from_parser(self)?)),
+            // MAP_WRAP => Ok(Box::new(MapLiteral::from_parser(self)?)),
+            // ARRAY_WRAP => Ok(Box::new(ArrayLiteral::from_parser(self)?)),
+            // FN_LOWER => Ok(Box::new(StringLower::from_parser(self)?)),
+            // FN_UPPER => Ok(Box::new(StringUpper::from_parser(self)?)),
+            // FN_LENGTH => Ok(Box::new(StringLength::from_parser(self)?)),
+            // FN_TRIM => Ok(Box::new(StringTrim::from_parser(self)?)),
+            // FN_TRIM_LEFT => Ok(Box::new(StringTrimLeft::from_parser(self)?)),
+            // FN_TRIM_RIGHT => Ok(Box::new(StringTrimRight::from_parser(self)?)),
+            // FN_CONCAT => Ok(Box::new(StringConcat::from_parser(self)?)),
+            // FN_SPLIT => Ok(Box::new(StringSplit::from_parser(self)?)),
+            // TRUE => Ok(Box::new(BoolExpression::from_parser(self)?)),
+            // FALSE => Ok(Box::new(BoolExpression::from_parser(self)?)),
+            NULL => Ok(Box::new(NullExpression::from_parser(self)?)),
+            //_ => self.parse_unwrapped_expression(),
+            _ => todo!(),
+        }
+    }
+
+    // fn parse_unwrapped_expression(&mut self) -> Result<Box<dyn Expression>> {
+    //     let left = self.peak().unwrap_or_default();
+    //     let mut chars = left.chars();
+    //     match chars.next() {
+    //         Some('0'..='9') | Some('-') => Ok(Box::new(NumberExpression::from_parser(self)?)),
+    //         _ => Ok(Box::new(PathExpression::from_parser(self)?)),
+    //     }
+    // }
+
+    fn parse_positive_number(&mut self) -> Result<usize> {
+        let tok = self
+            .lex
+            .token()
+            .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+        match tok.parse::<usize>() {
+            Ok(num) => Ok(num),
+            Err(e) => Err(Error::with_history(
+                &format!("expected number but got {}", e),
+                self.consumed(),
+            )),
+        }
+    }
+
+    // parse_identifier allows you to parse a string with an optional wrapping
+    // token.
+    fn parse_identifier(&mut self, wrap: &str) -> Result<String> {
+        let wrapped = self.is_next(wrap);
+        if wrapped {
+            self.consume()
+        }
+
+        let value = self
+            .lex
+            .token()
+            .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+        if wrapped {
+            self.consume_next(wrap)?;
+        }
+
+        Ok(String::from(value))
+    }
+
+    pub fn parse_string(&mut self, wrap: &str) -> Result<String> {
+        self.consume_next(wrap)?;
+
+        let value = self
+            .lex
+            .token()
+            .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+        // consume the final " token, and return. If we get a different token
+        // or hit EOF we can return an error
+        self.consume_next(wrap)?;
+        Ok(value.to_string())
+    }
+
+    pub fn parse_duration(&mut self, wrap: &str) -> Result<Duration> {
+        let wrapped = self.is_next(wrap);
+        if wrapped {
+            self.consume()
+        }
+
+        let value = self
+            .lex
+            .token()
+            .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+        if wrapped {
+            self.consume_next(wrap)?;
+        }
+
+        parse_duration::parse(value)
+            .map_err(|err| Error::InvalidQuery(format!("invalid duration {}", err)))
+    }
+
+    // is_next will check to see if the next value matches the supplied
+    // token.
+    pub fn is_next(&mut self, tok: &str) -> bool {
+        let seen = match self.lex.peak() {
+            Some(seen) => seen,
+            None => return false,
+        };
+
+        tok == seen.to_uppercase()
+    }
+
+    // consume_next will return an error if the next token consumed is not the
+    // one supplied to the parser.
+    pub fn consume_next(&mut self, expected: &str) -> Result<()> {
+        let seen = self
+            .lex
+            .token()
+            .ok_or_else(|| Error::unexpected_eof(self.consumed()))?;
+
+        if seen.to_uppercase() != expected {
+            return Err(Error::with_history(
+                &format!("expected \"{}\" but got \"{}\"", expected, seen),
+                self.consumed(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    // consume just consumes the next token, no questions asked.
+    pub fn consume(&mut self) {
+        let _ = self.lex.token();
+    }
+
+    // future returns tokens in the future.
+    pub fn future(&self) -> &str {
+        self.lex.future()
+    }
+
+    // advance_by moves the head of the lexor forward by the defined
+    // number of characters.
+    pub fn advance_by(&mut self, delta: usize) {
+        self.lex.advance_head(delta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // use super::*;
+    // use mock_instant::global::MockClock;
+
+    // macro_rules! assert_condition {
+    //     ( $source:expr, $expr:expr, $expected:expr) => {
+    //         let mut parser = Parser::from($expr);
+    //         let expr = parser.parse_condition().unwrap();
+    //         let d: Dapt = serde_json::from_str($source).unwrap();
+    //         let result = expr.evaluate(&d).unwrap();
+    //         assert_eq!(result, $expected);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_condition() {
+    //     assert_condition!(r#"{"a": 10, "b": 9}"#, r#" "a" == "b" "#, false);
+    //     assert_condition!(r#"{"a": 10, "b": "10"}"#, r#" "a" == "b" "#, true);
+    //     assert_condition!(
+    //         r#"{"a": "hello world"}"#,
+    //         r#" split("a", ' ') == ['hello', 'world'] "#,
+    //         true
+    //     );
+
+    //     // adding this because it's cool, we fine a word in the string
+    //     assert_condition!(
+    //         r#"{"a": "hello world we are going to find a word in this string"}"#,
+    //         r#" 'going' in split("a", ' ') "#,
+    //         true
+    //     );
+    // }
+
+    // macro_rules! assert_conjunction {
+    //     ( $source:expr, $expr:expr, $expected:expr) => {
+    //         let mut parser = Parser::from($expr);
+    //         let expr = parser.parse_conjunction().unwrap();
+    //         let d: Dapt = serde_json::from_str($source).unwrap();
+    //         let result = expr.evaluate(&d).unwrap();
+    //         assert_eq!(result, $expected);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_conjunction() {
+    //     // test key equality
+    //     assert_conjunction!(
+    //         r#"{"a": 10, "b": 9, "c": 10.0}"#,
+    //         r#" "a" != "b" AND "a" == "c" "#,
+    //         true
+    //     );
+
+    //     assert_conjunction!(
+    //         r#"{"a": 10, "b": 9, "c": 10.0}"#,
+    //         r#" "a" == "b" AND "a" == "c" "#,
+    //         false
+    //     );
+
+    //     // test string literal
+    //     assert_conjunction!(
+    //         r#"{"a": "hello world"}"#,
+    //         r#" "a" == 'goodbye world' "#,
+    //         false
+    //     );
+
+    //     assert_conjunction!(r#"{"a": "hello world"}"#, r#" "a" == 'hello world' "#, true);
+
+    //     // test raw expression
+    //     assert_conjunction!(r#" {"a": true} "#, r#" "a" "#, true);
+    //     assert_conjunction!(r#" {"a": false} "#, r#" "a" "#, false);
+    //     assert_conjunction!(r#" {"a": 0} "#, r#" "a" "#, false);
+    //     assert_conjunction!(r#" {"a": 100} "#, r#" "a" "#, true);
+    //     assert_conjunction!(r#" {"a": "hello"} "#, r#" "a" "#, true);
+    //     assert_conjunction!(r#" {"a": ""} "#, r#" "a" "#, false);
+    //     assert_conjunction!(r#" {"a": ["a", "b"]} "#, r#" "a" "#, true);
+    //     assert_conjunction!(r#" {"a": []} "#, r#" "a" "#, false);
+    //     assert_conjunction!(r#" {"a": null} "#, r#" "a" "#, false);
+    //     assert_conjunction!(r#" {"a": {"a":1, "b":2}} "#, r#" "a" "#, true);
+    //     assert_conjunction!(r#" {"a": {}} "#, r#" "a" "#, false);
+    //     // this key doesn't exist
+    //     assert_conjunction!(r#" {"a": {}} "#, r#" "no_existy" "#, false);
+
+    //     // handling null
+    //     assert_conjunction!(r#"{"a": null}"#, r#" "a" == NULL "#, true);
+    //     assert_conjunction!(r#"{"a": null}"#, r#" "a" != NULL "#, false);
+    //     // "a" has no value, null is a valid value... not sure what I think about
+    //     // that. Currently you could ` "a" ` alone to test for it's existance
+    //     assert_conjunction!(r#"{"b": "something"}"#, r#" "a" != NULL "#, true);
+
+    //     // test bool
+    //     assert_conjunction!(r#"{"a": true}"#, r#" "a" == true "#, true);
+    //     assert_conjunction!(r#"{"a": false}"#, r#" "a" == false "#, true);
+    //     assert_conjunction!(r#"{"a": true}"#, r#" "a" != true "#, false);
+    //     assert_conjunction!(r#"{"a": false}"#, r#" "a" != false "#, false);
+
+    //     // test numbers
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" == 10 "#, true);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" != 10 "#, false);
+    //     assert_conjunction!(r#"{"a": 10.98}"#, r#" "a" == 10.98 "#, true);
+
+    //     // test map
+    //     assert_conjunction!(
+    //         r#"{"a": {"b": 10, "c": 20}}"#,
+    //         r#" "a" == {"b": 10, "c": 20} "#,
+    //         true
+    //     );
+
+    //     assert_conjunction!(
+    //         r#"{"a": {"b": {"c": 20}}}"#,
+    //         r#" "a" == {"b": {"c": 20}} "#,
+    //         true
+    //     );
+
+    //     assert_conjunction!(r#"{"a": [1,2,3]}"#, r#" "a" == [3,2,1] "#, true);
+    //     assert_conjunction!(r#"{"a": [1,2,3,4]}"#, r#" "a" == [3,2,1] "#, false);
+
+    //     // because you are selecting multiple things, the returned value is an array
+    //     // so we can compare that to an array literal
+    //     assert_conjunction!(
+    //         r#"{"a": {"b": "hello", "c": "world"}}"#,
+    //         r#" a.* == ['hello', 'world'] "#,
+    //         true
+    //     );
+
+    //     // this is silly but is the same thing we are doing above, just using
+    //     // keys directly. This is allowed because the value can be any expression
+    //     // same with maps
+    //     assert_conjunction!(
+    //         r#"{"a": {"b": "hello", "c": "world"}}"#,
+    //         r#" a.* == ["a"."b", a.c] "#,
+    //         true
+    //     );
+
+    //     // Number Operators
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" > 9 "#, true);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" < 9 "#, false);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" < 100 "#, true);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" > 100 "#, false);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" >= 10 "#, true);
+    //     assert_conjunction!(r#"{"a": 100}"#, r#" "a" >= 10 "#, true);
+    //     assert_conjunction!(r#"{"a": 1}"#, r#" "a" >= 10 "#, false);
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" <= 10 "#, true);
+    //     assert_conjunction!(r#"{"a": 100}"#, r#" "a" <= 10 "#, false);
+    //     assert_conjunction!(r#"{"a": 1}"#, r#" "a" <= 10 "#, true);
+
+    //     // in
+    //     assert_conjunction!(r#"{"a": 10}"#, r#" "a" IN [1,2,3,4,5,6,7,8,9,10] "#, true);
+    //     // here we are showing how in can be used to find an object in an array
+    //     // also we are using a as the right side since it has the set
+    //     assert_conjunction!(
+    //         r#"{"a": [{"a": 1}, {"b": 2}, {"c": 11}]}"#,
+    //         r#" {"c":11} in "a" "#,
+    //         true
+    //     );
+    //     // we can use in on a map as well, making it easy to look for a child if you don't
+    //     // know the name
+    //     assert_conjunction!(
+    //         r#"{"a": {"a":{"a": 1}, "b":{"b": 2}, "c":{"c": 11}}}"#,
+    //         r#" {"c":12} in "a" "#,
+    //         true
+    //     );
+
+    //     // finally in is very helpful when we don't know how many things our key matches
+    //     // but we want to evaluate to true if one of them matches
+    //     assert_conjunction!(r#"{"a": {"a": 1, "b": 2, "c": 3}}"#, r#" 2 in a.* "#, true);
+    // }
+
+    // macro_rules! assert_where {
+    //     ( $source:expr, $expr:expr, $expected:expr) => {
+    //         let mut parser = Parser::from($expr);
+    //         let expr = parser.parse_where().unwrap();
+    //         let d: Dapt = serde_json::from_str($source).unwrap();
+    //         let result = expr.condition.evaluate(&d).unwrap();
+    //         assert_eq!(result, $expected);
+    //     };
+    // }
+
+    // macro_rules! assert_where_error {
+    //     ( $source:expr, $expr:expr, $expected:expr) => {
+    //         let mut parser = Parser::from($expr);
+    //         let expr = parser.parse_where().unwrap();
+    //         let d: Dapt = serde_json::from_str($source).unwrap();
+    //         match expr.condition.evaluate(&d) {
+    //             Ok(_) => panic!("expected error"),
+    //             Err(e) => assert_eq!(e.to_string(), $expected),
+    //         }
+    //     };
+    // }
+
+    // #[test]
+    // fn test_where() {
+    //     assert_where!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE "a" != "b" AND "a" == "c" "#,
+    //         true
+    //     );
+
+    //     // wait shouldn't this be an error. Well, I guess not, because the OR is
+    //     // never evaluated because the left side is true.
+    //     assert_where!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE "a" != "b" AND ("a" == "c" OR "nope" == "nothere") "#,
+    //         true
+    //     );
+
+    //     // make sure we respect order of operations
+    //     // this should be understood as
+    //     // (a = 10 AND b = 9) OR (a = 11 AND b = 5)
+    //     assert_where!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE a = 10 AND b = 9 OR a = 11 AND b = 5 "#,
+    //         true
+    //     );
+
+    //     // negate
+    //     assert_where!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE !(a = 11 AND b = 5) "#,
+    //         true
+    //     );
+
+    //     assert_where_error!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE "non_existant" == "other_nonexistant" "#,
+    //         "Non existent key: both keys non_existant == other_nonexistant do not exist"
+    //     );
+
+    //     assert_where_error!(
+    //         r#"{
+    //             "a": 10,
+    //             "b": 9,
+    //             "c": 10.0
+    //         }"#,
+    //         r#"WHERE "a" != "b" AND ("nope" == "nothere" OR "a" == "c") "#,
+    //         "Non existent key: both keys nope == nothere do not exist"
+    //     );
+    // }
+
+    // macro_rules! assert_select {
+    //     ( $expr:expr, $expected:expr, $($source:expr),+) => {
+    //         let mut parser = Parser::from($expr);
+    //         let mut expr = parser.parse_select().unwrap();
+    //         let sources = vec![$(serde_json::from_str($source).unwrap()),+];
+    //         for d in sources {
+    //             expr.process(&d);
+    //         }
+    //         let result = expr.collect().unwrap();
+    //         assert_eq!(serde_json::to_string(&result).unwrap(), $expected);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_select() {
+    //     // literal, just to prove it can be done
+    //     assert_select!(
+    //         r#"SELECT 10 as "number" "#,
+    //         r#"{"number":10}"#,
+    //         // values
+    //         r#"{"a": 1}"#,
+    //         r#"{"a": 2}"#,
+    //         r#"{"a": 3}"#
+    //     );
+
+    //     assert_select!(
+    //         r#"SELECT sum("a") as "sum" "#,
+    //         r#"{"sum":6}"#,
+    //         // values
+    //         r#"{"a": 1}"#,
+    //         r#"{"a": 2}"#,
+    //         r#"{"a": 3}"#
+    //     );
+
+    //     assert_select!(
+    //         r#"SELECT sum("a") "#,
+    //         r#"{"SUM(a)":6}"#,
+    //         // values
+    //         r#"{"a": 1}"#,
+    //         r#"{"a": 2}"#,
+    //         r#"{"a": 3}"#
+    //     );
+
+    //     assert_select!(
+    //         r#"SELECT sum("a") as "a"."b"."c" "#,
+    //         r#"{"a":{"b":{"c":6}}}"#,
+    //         // values
+    //         r#"{"a": 1}"#,
+    //         r#"{"a": 2}"#,
+    //         r#"{"a": 3}"#
+    //     );
+
+    //     assert_select!(
+    //         r#"SELECT sum("a") as "sum", count("a") as "count" "#,
+    //         r#"{"sum":6,"count":3}"#,
+    //         // values
+    //         r#"{"a": 1}"#,
+    //         r#"{"a": 2}"#,
+    //         r#"{"a": 3}"#
+    //     );
+    // }
+
+    // macro_rules! assert_select {
+    //     ( $expr:expr, $expected:expr, $($source:expr),+) => {
+    //         let mut parser = Parser::from($expr);
+    //         let mut expr = parser.parse_query().unwrap();
+    //         let sources = vec![$(serde_json::from_str($source).unwrap()),+];
+    //         for d in sources {
+    //             expr.process(&d).unwrap();
+    //         }
+    //         let result = expr.collect().unwrap();
+    //         assert_eq!(serde_json::to_string(&result).unwrap(), $expected);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_query() {
+    //     assert_select!(
+    //         r#"SELECT sum("a") as "sum", count("a") as "count", "b" as banana WHERE "a" > 1 GROUP BY "banana" ORDER BY "banana" "#,
+    //         r#"[{"sum":7,"count":2,"banana":"hello"},{"sum":2,"count":1,"banana":"hi"}]"#,
+    //         // values
+    //         r#"{"a": 1, "b": "hi"}"#,
+    //         r#"{"a": 2, "b": "hi"}"#,
+    //         r#"{"a": 3, "b": "hello"}"#,
+    //         r#"{"a": 4, "b": "hello"}"#
+    //     );
+
+    //     assert_select!(
+    //         r#" select sum("a") as "sum", "b" GROUP BY "b" ORDER BY "sum" DESC "#,
+    //         r#"[{"sum":95,"b":"hi"},{"sum":3,"b":"hello"}]"#,
+    //         // values
+    //         r#"{"a": 1, "b": "hello"}"#,
+    //         r#"{"a": 2, "b": "hello"}"#,
+    //         r#"{"a": 3, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#
+    //     );
+
+    //     assert_select!(
+    //         r#" select sum("a") as "sum", "b" GROUP BY "b" ORDER BY "sum" DESC LIMIT 1"#,
+    //         r#"[{"sum":95,"b":"hi"}]"#,
+    //         // values
+    //         r#"{"a": 1, "b": "hello"}"#,
+    //         r#"{"a": 2, "b": "hello"}"#,
+    //         r#"{"a": 3, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#
+    //     );
+
+    //     // most simple
+    //     assert_select!(
+    //         r#" select count() as "count" "#,
+    //         r#"[{"count":26}]"#,
+    //         // values
+    //         r#"{"a": 1, "b": "hello"}"#,
+    //         r#"{"a": 2, "b": "hello"}"#,
+    //         r#"{"a": 3, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#,
+    //         r#"{"a": 4, "b": "hi"}"#
+    //     );
+    // }
+
+    // macro_rules! assert_composite_query {
+    //     ( $query:expr, $expected:expr, $($source:expr),+) => {
+    //         // create our query
+    //         let query = Query::new($query).unwrap();
+    //         // make it composable
+    //         let (composable, combine) = query.composite();
+    //         let mut combine = combine;
+
+    //         // each source coming in here will be an array of values, this emulates
+    //         // having multiple datasets.
+    //         let sources = vec![$(serde_json::from_str::<Dapt>($source).unwrap()),+];
+    //         for d in sources {
+    //             // create a new composable aggregation for each dataset and
+    //             // have it aggregate data
+    //             let mut c = composable.clone();
+    //             for sd in d.sub("[]").unwrap() {
+    //                 c.process(&sd).unwrap();
+    //             }
+
+    //             // take the aggregates and pass it into the combiner
+    //             let res = c.collect().unwrap();
+    //             for sd in res {
+    //                 combine.process(&sd).unwrap();
+    //             }
+    //         }
+
+    //         // collect the results of the combiner, which should be the same
+    //         // as running the orignal query with only one dataset.
+    //         let result = combine.collect().unwrap();
+    //         assert_eq!(serde_json::to_string(&result).unwrap(), $expected);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_composite_queries() {
+    //     // expression aggregate
+    //     assert_composite_query!(
+    //         "select \"a\"",
+    //         r#"[{"a":1}]"#,
+    //         r#"[{"a": 1, "b": "hello"},{"a": 2, "b": "hello"}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // sum
+    //     assert_composite_query!(
+    //         "select sum(\"a\") as \"sum\"",
+    //         r#"[{"sum":6}]"#,
+    //         r#"[{"a": 1, "b": "hello"},{"a": 2, "b": "hello"}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // count
+    //     assert_composite_query!(
+    //         "select count() as \"count\"",
+    //         r#"[{"count":3}]"#,
+    //         r#"[{"a": 1, "b": "hello"},{"a": 2, "b": "hello"}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // avg
+    //     assert_composite_query!(
+    //         "select avg(\"a\") as \"avg\"",
+    //         r#"[{"avg":2.0}]"#,
+    //         r#"[{"a": 1, "b": "hello"},{"a": 2, "b": "hello"}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // add
+    //     assert_composite_query!(
+    //         "select sum(\"a\") + sum(\"b\") as \"sums\"",
+    //         r#"[{"sums":20.0}]"#,
+    //         r#"[{"a": 1, "b": 12},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // subtract
+    //     assert_composite_query!(
+    //         "select sum(\"a\") - sum(\"b\") as \"subtract\"",
+    //         r#"[{"subtract":-8.0}]"#,
+    //         r#"[{"a": 1, "b": 12},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // multiply
+    //     assert_composite_query!(
+    //         "select sum(\"a\") * sum(\"b\") as \"multiply\"",
+    //         r#"[{"multiply":84.0}]"#,
+    //         r#"[{"a": 1, "b": 12},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // divide
+    //     assert_composite_query!(
+    //         "select sum(\"a\")/sum(\"b\") as \"divide\"",
+    //         r#"[{"divide":0.5}]"#,
+    //         r#"[{"a": 1, "b": 10},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // mod
+    //     assert_composite_query!(
+    //         "select sum(\"a\")%sum(\"b\") as \"modulus\"",
+    //         r#"[{"modulus":6.0}]"#,
+    //         r#"[{"a": 1, "b": 12},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     // exponent
+    //     assert_composite_query!(
+    //         "select sum(\"a\")^(\"b\") as \"power\"",
+    //         r#"[{"power":2176782336}]"#,
+    //         r#"[{"a": 1, "b": 12},{"a": 2, "b": 2}]"#,
+    //         r#"[{"a": 3}]"#
+    //     );
+
+    //     assert_composite_query!(
+    //         "select sum(\"a\") as \"sum\", count() as \"count\", \"b\" WHERE \"a\" > 1 GROUP BY \"b\" ORDER BY \"sum\" DESC LIMIT 2",
+    //         r#"[{"sum":13,"count":3,"b":"what"},{"sum":6,"count":1,"b":"goodbye"}]"#,
+    //         r#"[{"a": 1, "b": "hello"},{"a": 2, "b": "hello"},{"a":6, "b": "goodbye"}]"#,
+    //         r#"[{"a": 3, "b":"hello"},{"a":5, "b": "what"},{"a": 3, "b":"what"},{"a":5, "b": "what"}]"#
+    //     );
+    // }
+
+    // macro_rules! assert_display_query {
+    //     ($input:expr, $output:expr) => {
+    //         let mut parser = Parser::from($input);
+    //         let query = parser.parse_query().unwrap();
+    //         let query_str = format!("{}", query);
+    //         assert_eq!(query_str, $output);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_display_query() {
+    //     assert_display_query!(
+    //         r#"SELECT sum("a") as "sum", count("a") as "count", "b" WHERE "a" > 1 GROUP BY "b" ORDER BY "b""#,
+    //         "SELECT SUM(a) AS sum, COUNT(a) AS count, b AS b WHERE a > 1 HAVING true GROUP BY b ORDER BY b"
+    //     );
+    // }
+
+    // macro_rules! assert_query_error {
+    //     ($query:expr, $error:expr) => {
+    //         let mut parser = Parser::from($query);
+    //         let err = match parser.parse_query() {
+    //             Ok(_) => panic!("expected error"),
+    //             Err(e) => format!("{}", e),
+    //         };
+    //         assert_eq!(err, $error);
+    //     };
+    // }
+
+    // #[test]
+    // fn test_qeury_error() {
+    //     assert_query_error!(
+    //         r#"something"#,
+    //         "Invalid query: [ something ] expected \"SELECT\" but got \"something\""
+    //     );
+    //     assert_query_error!(
+    //         r#"SELECT "a" WHERE "chicken" == 'a' WHERE "turkey" > 19 "#,
+    //         "Invalid query: [ SELECT \"a\" WHERE \"chicken\" == 'a' █ WHERE \"turkey\" > 19  ]: unexpected trailing content: WHERE \"turkey\" > 19"
+    //     );
+    // }
+
+    // macro_rules! assert_query {
+    //     ($query:expr, $expected:expr, $($source:expr),+) => {
+    //         // create our query
+    //         let mut query = Query::new($query)?;
+    //         // make it composable
+    //         let (mut composable, mut combine) = query.composite();
+
+    //         println!("testing\n\tquery: {}\n\tcomposite: {}\n\tcombiner: {}", query, composable, combine);
+
+    //         MockClock::set_time(query.interval.duration*100);
+    //         assert_ne!(query.interval.duration, Duration::from_secs(0));
+
+    //         // each source coming in here will be an array of values, this emulates
+    //         // having multiple datasets.
+    //         let sources = vec![$(serde_json::from_str::<Dapt>($source).unwrap()),+];
+    //         let expected = serde_json::from_str::<Dapt>($expected).unwrap();
+    //         let mut expected = expected.sub("[]")?;
+
+    //         assert_eq!(expected.len(), sources.len(), "Results must match sources");
+
+    //         let mut x = 0;
+    //         for d in sources {
+    //             for sd in d.sub("[]")? {
+    //                 query.process(&sd)?;
+    //                 composable.process(&sd)?;
+    //             }
+
+    //             // take the aggregates and pass it into the combiner
+    //             let res = composable.collect()?;
+    //             for sd in res {
+    //                 combine.process(&sd)?;
+    //             }
+
+    //             let expected_result = serde_json::to_string(&expected.next().unwrap()).unwrap();
+    //             let query_result = serde_json::to_string(&query.collect().unwrap()).unwrap();
+    //             let combine_result = serde_json::to_string(&combine.collect().unwrap()).unwrap();
+
+    //             println!("set {}\n\texpected: {}\n\tquery: {}\n\tcombine: {}\n\t", x, expected_result, query_result, combine_result);
+    //             assert_eq!(expected_result, query_result, "normal query [set: {}]", x);
+    //             assert_eq!(expected_result, combine_result, "combine query [set: {}]", x);
+
+    //             MockClock::advance(query.interval.duration);
+    //             x += 1;
+    //         }
+    //     };
+    // }
+
+    // #[test]
+    // fn test_the_query() -> QueryResult<()> {
+    //     assert_query!(
+    //         r#"SELECT count() as count, "a" FROM logs group by "a" INTERVAL 1s EVICT 2s"#,
+    //         r#"[
+    //             [
+    //                 {"count":3,"a":"something"}
+    //             ],
+    //             [
+    //                 {"count":2,"a":"something"}
+    //             ],
+    //             [
+    //                 {"count":0,"a":"something"}
+    //             ]
+    //         ]"#,
+    //         r#"[
+    //             {"a":"something"},
+    //             {"a":"something"},
+    //             {"a":"something"}
+    //         ]"#,
+    //         r#"[
+    //             {"a":"something"},
+    //             {"a":"something"}
+    //         ]"#,
+    //         r#"[]"#
+    //     );
+
+    //     // assert_query!(
+    //     //     r#"SELECT count() as count, "a" FROM logs group by "a" INTERVAL 1m EVICT 1m EMIT ON EVICT"#,
+    //     //     r#"[
+    //     //         [],
+    //     //         [{"count":2,"a":"something"}],
+    //     //         []
+    //     //     ]"#,
+    //     //     r#"[
+    //     //         {"a":"something"},
+    //     //         {"a":"something"},
+    //     //         {"a":"nothing"}
+    //     //     ]"#,
+    //     //     r#"[
+    //     //         {"a":"nothing"},
+    //     //         {"a":"nothing"}
+    //     //     ]"#,
+    //     //     r#"[]"#
+    //     // );
+    //     Ok(())
+    // }
+}
