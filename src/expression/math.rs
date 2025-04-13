@@ -19,7 +19,7 @@ macro_rules! impl_expression_math_op {
         }
 
         impl<T: Container> Expression<T> for $name<T> {
-            fn evaluate<'a, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+            fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
                 let left: Number = self.left.evaluate(d)?.try_into()?;
                 let right: Number = self.right.evaluate(d)?.try_into()?;
 
@@ -64,7 +64,7 @@ impl<T: Container> ExponentExpression<T> {
 }
 
 impl<T: Container> Expression<T> for ExponentExpression<T> {
-    fn evaluate<'a, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
         let left: Number = self.left.evaluate(d)?.try_into()?;
         let right: Number = self.right.evaluate(d)?.try_into()?;
 
@@ -96,7 +96,7 @@ impl<T: Container> SubExpression<T> {
 }
 
 impl<T: Container> Expression<T> for SubExpression<T> {
-    fn evaluate<'a, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
         self.expr.evaluate(d)
     }
 

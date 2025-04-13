@@ -14,7 +14,7 @@ pub trait Expression<T>: Display + Send + Sync
 where
     T: Container,
 {
-    fn evaluate<'a, 'b>(&'a self, c: &'b T) -> Result<Any<'b>>;
+    fn evaluate<'a: 'b, 'b>(&'a self, c: &'b T) -> Result<Any<'b>>;
 
     fn clone(&self) -> Box<dyn Expression<T>>;
 }
@@ -40,6 +40,16 @@ mod test {
     #[test]
     fn test_expression() {
         assert_expression!(r#"{}"#, "NULL", Any::Null);
-        // assert_expression!(r#"{"a.b.c": "hello"}"#, r#"length("\"a.b.c\"")"#, 5);
+        assert_expression!(r#"{}"#, "''", Any::from(""));
+        assert_expression!(r#"{}"#, "'hello'", Any::from("hello"));
+        assert_expression!(r#"{}"#, "10", Any::from(10));
+        assert_expression!(r#"{}"#, "10+25", Any::from(35));
+        assert_expression!(r#"{}"#, "25/2", Any::from(12));
+        assert_expression!(r#"{}"#, "25.0/2", Any::from(12.5));
+        assert_expression!(r#"{}"#, "25.0-2", Any::from(23));
+        assert_expression!(r#"{}"#, "25.0^2", Any::from(625));
+        assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
+        assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
+        assert_expression!(r#"{}"#, "34-66*11+(45^2)/10.0", Any::from(-489.5));
     }
 }

@@ -194,7 +194,7 @@ impl Display for Str<'_> {
 //
 // Both numbers are unsigned integers, so the returned number will also be an unsigned
 // integer.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Number {
     Float(f64),
     Integer(i64),
@@ -272,11 +272,13 @@ impl_number_from!(u8, UInteger, u64);
 impl_number_from!(u16, UInteger, u64);
 impl_number_from!(u32, UInteger, u64);
 impl_number_from!(u64, UInteger, u64);
+impl_number_from!(usize, UInteger, u64);
 impl_number_from!(u128, UInteger, u64);
 impl_number_from!(i8, Integer, i64);
 impl_number_from!(i16, Integer, i64);
 impl_number_from!(i32, Integer, i64);
 impl_number_from!(i64, Integer, i64);
+impl_number_from!(isize, Integer, i64);
 impl_number_from!(i128, Integer, i64);
 impl_number_from!(f32, Float, f64);
 impl_number_from!(f64, Float, f64);

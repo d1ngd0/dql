@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, time::Duration};
 
-use crate::Container;
+use crate::{Container, Number};
 
 use super::{Error, History, Result, expression::*, lexor::Lexer};
 
@@ -300,7 +300,7 @@ impl<'a, T: Container> Parser<'a, T> {
                 Ok(Box::new(SubExpression::new(expr)))
             }
             // KEY_WRAP => Ok(Box::new(PathExpression::from_parser(self)?)),
-            // STRING_WRAP => Ok(Box::new(StringExpression::from_parser(self)?)),
+            STRING_WRAP => Ok(Box::new(self.string_literal()?)),
             // MAP_WRAP => Ok(Box::new(MapLiteral::from_parser(self)?)),
             // ARRAY_WRAP => Ok(Box::new(ArrayLiteral::from_parser(self)?)),
             // FN_LOWER => Ok(Box::new(StringLower::from_parser(self)?)),
@@ -314,22 +314,57 @@ impl<'a, T: Container> Parser<'a, T> {
             // TRUE => Ok(Box::new(BoolExpression::from_parser(self)?)),
             // FALSE => Ok(Box::new(BoolExpression::from_parser(self)?)),
             NULL => Ok(Box::new(self.null()?)),
-            //_ => self.parse_unwrapped_expression(),
+            _ => self.parse_unwrapped_expression(),
+        }
+    }
+
+    fn parse_unwrapped_expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+        let mut chars = peak!(self).unwrap_or_default().chars();
+        match chars.next() {
+            Some('0'..='9') | Some('-') => Ok(Box::new(self.number_literal()?)),
+            // _ => Ok(Box::new(PathExpression::from_parser(self)?)),
             _ => todo!(),
         }
     }
 
-    // fn parse_unwrapped_expression(&mut self) -> Result<Box<dyn Expression>> {
-    //     let left = self.peak().unwrap_or_default();
-    //     let mut chars = left.chars();
-    //     match chars.next() {
-    //         Some('0'..='9') | Some('-') => Ok(Box::new(NumberExpression::from_parser(self)?)),
-    //         _ => Ok(Box::new(PathExpression::from_parser(self)?)),
-    //     }
-    // }
-
-    fn null(&mut self) -> Result<NullExpression<T>> {
+    // null parses and returns a null expression
+    fn null(&mut self) -> Result<NullExpression> {
         consume_next!(self, NULL)?;
         Ok(NullExpression::default())
+    }
+
+    // string_literal parses and returns a string literal
+    fn string_literal(&mut self) -> Result<StringLiteral> {
+        consume_next!(self, STRING_WRAP)?;
+
+        // check for an empty string
+        if continue_if!(self, STRING_WRAP) {
+            return Ok(StringLiteral::new(String::new()));
+        }
+
+        let value = must_token!(self)?;
+        consume_next!(self, STRING_WRAP)?;
+
+        Ok(StringLiteral::from(value))
+    }
+
+    // number_literal parses and returns a number literal
+    fn number_literal(&mut self) -> Result<NumberLiteral> {
+        let tok = must_token!(self)?;
+        let chars = tok.chars();
+
+        if chars.filter(|c| *c == '.').count() == 1 {
+            let num = tok.parse::<f64>().map_err(|e| {
+                Error::with_history(&format!("expected float but got {}", e), self.history())
+            })?;
+
+            Ok(NumberLiteral::from(num))
+        } else {
+            let num = tok.parse::<i64>().map_err(|e| {
+                Error::with_history(&format!("expected integer but got {}", e), self.history())
+            })?;
+
+            Ok(NumberLiteral::from(num))
+        }
     }
 }
