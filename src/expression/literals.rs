@@ -3,7 +3,7 @@ use std::{
     marker::PhantomData,
 };
 
-use crate::{Any, Container, Parser, Result};
+use crate::{Any, Container, Result};
 
 use super::Expression;
 
@@ -13,12 +13,11 @@ pub struct NullExpression<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: Container> NullExpression<T> {
-    pub fn from_parser(parser: &mut Parser<T>) -> Result<Self> {
-        parser.consume_next("NULL")?;
-        Ok(NullExpression {
+impl<T: Container> Default for NullExpression<T> {
+    fn default() -> Self {
+        NullExpression {
             _phantom: PhantomData,
-        })
+        }
     }
 }
 

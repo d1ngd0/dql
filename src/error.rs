@@ -3,6 +3,7 @@ use std::fmt::Display;
 pub type Result<T> = std::result::Result<T, Error>;
 
 // Error is the Error type for DQL
+#[derive(Debug)]
 pub enum Error {
     InvalidType,
     InvalidQuery(String),
