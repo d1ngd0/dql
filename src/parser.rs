@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, time::Duration};
+use std::{collections::HashMap, marker::PhantomData, time::Duration};
 
 use crate::{Container, Number};
 
@@ -301,7 +301,7 @@ impl<'a, T: Container> Parser<'a, T> {
             }
             // KEY_WRAP => Ok(Box::new(PathExpression::from_parser(self)?)),
             STRING_WRAP => Ok(Box::new(self.string_literal()?)),
-            // MAP_WRAP => Ok(Box::new(MapLiteral::from_parser(self)?)),
+            MAP_WRAP => Ok(Box::new(self.map_literal()?)),
             // ARRAY_WRAP => Ok(Box::new(ArrayLiteral::from_parser(self)?)),
             // FN_LOWER => Ok(Box::new(StringLower::from_parser(self)?)),
             // FN_UPPER => Ok(Box::new(StringUpper::from_parser(self)?)),
@@ -311,8 +311,8 @@ impl<'a, T: Container> Parser<'a, T> {
             // FN_TRIM_RIGHT => Ok(Box::new(StringTrimRight::from_parser(self)?)),
             // FN_CONCAT => Ok(Box::new(StringConcat::from_parser(self)?)),
             // FN_SPLIT => Ok(Box::new(StringSplit::from_parser(self)?)),
-            // TRUE => Ok(Box::new(BoolExpression::from_parser(self)?)),
-            // FALSE => Ok(Box::new(BoolExpression::from_parser(self)?)),
+            TRUE => Ok(Box::new(self.bool_literal()?)),
+            FALSE => Ok(Box::new(self.bool_literal()?)),
             NULL => Ok(Box::new(self.null()?)),
             _ => self.parse_unwrapped_expression(),
         }
@@ -366,5 +366,47 @@ impl<'a, T: Container> Parser<'a, T> {
 
             Ok(NumberLiteral::from(num))
         }
+    }
+
+    fn bool_literal(&mut self) -> Result<BoolLiteral> {
+        let value = must_token!(self)?.to_uppercase();
+
+        Ok(BoolLiteral::from(match value.as_str() {
+            TRUE => true,
+            FALSE => false,
+            _ => {
+                return Err(Error::with_history(
+                    &format!("expected TRUE or FALSE but got {}", value),
+                    self.history(),
+                ));
+            }
+        }))
+    }
+
+    fn map_literal(&mut self) -> Result<MapLiteral<T>> {
+        consume_next!(self, MAP_WRAP)?;
+
+        let mut map = HashMap::new();
+        loop {
+            // pase 'key': <expression>
+            let key = self.string_literal()?;
+            consume_next!(self, MAP_CHILD_SET)?;
+            let value = self.expression()?;
+
+            map.insert(key.to_string(), value);
+
+            match must_token!(self)? {
+                MAP_WRAP_END => break,
+                MAP_CHILD_SEP => continue,
+                tok => {
+                    return Err(Error::with_history(
+                        &format!("expected {MAP_CHILD_SEP} or {MAP_WRAP_END} but got {tok}"),
+                        self.history(),
+                    ));
+                }
+            }
+        }
+
+        Ok(MapLiteral::from(map))
     }
 }

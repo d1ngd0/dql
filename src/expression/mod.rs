@@ -3,14 +3,14 @@ mod math;
 
 pub use literals::*;
 pub use math::*;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use crate::{Any, Container, error::Result};
 
 // Expression is a trait that takes in a dapt packet and returns an
 // optional value. This value can be Any type, which is what a dapt packet
 // can return.
-pub trait Expression<T>: Display + Send + Sync
+pub trait Expression<T>: Display + Debug + Send + Sync
 where
     T: Container,
 {
@@ -21,6 +21,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::parser::Parser;
     use serde_json::Value;
@@ -51,5 +53,15 @@ mod test {
         assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
         assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
         assert_expression!(r#"{}"#, "34-66*11+(45^2)/10.0", Any::from(-489.5));
+        assert_expression!(r#"{}"#, "true", Any::from(true));
+        assert_expression!(r#"{}"#, "false", Any::from(false));
+        assert_expression!(
+            r#"{}"#,
+            "{'something': true}",
+            Any::from(HashMap::from([(
+                String::from("something"),
+                Any::from(true)
+            )]))
+        );
     }
 }

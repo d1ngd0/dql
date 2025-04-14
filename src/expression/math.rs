@@ -7,6 +7,7 @@ use super::Expression;
 // Math expressions
 macro_rules! impl_expression_math_op {
     ($name:ident, $op:tt) => {
+        #[derive(Debug)]
         pub struct $name<T: Container> {
             left: Box<dyn Expression<T>>,
             right: Box<dyn Expression<T>>,
@@ -49,6 +50,7 @@ impl_expression_math_op!(MultiplyExpression, *);
 impl_expression_math_op!(AddExpression, +);
 impl_expression_math_op!(SubtractExpression, -);
 
+#[derive(Debug)]
 pub struct ExponentExpression<T: Container> {
     left: Box<dyn Expression<T>>,
     right: Box<dyn Expression<T>>,
@@ -85,6 +87,7 @@ impl<T: Container> Display for ExponentExpression<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct SubExpression<T: Container> {
     expr: Box<dyn Expression<T>>,
 }

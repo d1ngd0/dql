@@ -1,4 +1,8 @@
-use std::fmt::{Debug, Display};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    ops::Deref,
+};
 
 use crate::{Any, Container, Number, Parser, Result, Str, parser::STRING_WRAP};
 
@@ -60,6 +64,19 @@ impl Display for StringLiteral {
     }
 }
 
+macro_rules! impl_deref_for_literal {
+    ($type:ty, $target:ty) => {
+        impl Deref for $type {
+            type Target = $target;
+
+            fn deref(&self) -> &Self::Target {
+                &self.value
+            }
+        }
+    };
+}
+impl_deref_for_literal!(StringLiteral, String);
+
 macro_rules! impl_string_literal_from {
     ($type:ty) => {
         impl<'a> From<$type> for StringLiteral {
@@ -103,6 +120,7 @@ impl Display for NumberLiteral {
         write!(f, "{}", self.value)
     }
 }
+impl_deref_for_literal!(NumberLiteral, Number);
 
 macro_rules! impl_number_literal_from {
     ($type:ty) => {
@@ -165,3 +183,66 @@ impl<'a> From<bool> for BoolLiteral {
         }
     }
 }
+
+impl_deref_for_literal!(BoolLiteral, bool);
+
+#[derive(Debug)]
+pub struct MapLiteral<T: Container> {
+    value: HashMap<String, Box<dyn Expression<T>>>,
+}
+
+impl<T: Container> MapLiteral<T> {
+    pub fn new(value: HashMap<String, Box<dyn Expression<T>>>) -> Self {
+        MapLiteral { value }
+    }
+}
+
+impl<T: Container> Expression<T> for MapLiteral<T> {
+    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+        // Any values that return an error are skipped when building the hash and will
+        // fail silently.
+        Ok(Any::from(
+            self.value
+                .iter()
+                .filter_map(|(k, v)| Some((k.to_string(), v.evaluate(d).ok()?)))
+                .collect::<HashMap<String, Any<'b>>>(),
+        ))
+    }
+
+    fn clone(&self) -> Box<dyn Expression<T>> {
+        Box::new(MapLiteral {
+            value: self
+                .value
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.as_ref().clone()))
+                .collect(),
+        })
+    }
+}
+
+impl<T: Container> Display for MapLiteral<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.value)
+    }
+}
+
+impl<T: Container> Deref for MapLiteral<T> {
+    type Target = HashMap<String, Box<dyn Expression<T>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+macro_rules! impl_map_literal_from {
+    ($type:ty) => {
+        impl<'a, T: Container> From<$type> for MapLiteral<T> {
+            fn from(value: $type) -> Self {
+                MapLiteral {
+                    value: value.into(),
+                }
+            }
+        }
+    };
+}
+impl_map_literal_from!(HashMap<String, Box<dyn Expression<T>>>);
