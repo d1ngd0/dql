@@ -1,18 +1,19 @@
 use crate::Error;
 use std::cmp::Ordering;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::{Div, Mul, Rem, Sub};
 use std::{collections::HashMap, fmt::Debug, fmt::Display};
 use std::{num::Wrapping, ops::Add};
 
 // Any defines all the data types that the query language can support
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Any<'a> {
     Null,
     Str(Str<'a>),
     Number(Number),
     Bool(bool),
     List(Vec<Any<'a>>),
-    Map(HashMap<String, Any<'a>>),
+    Map(HashMap<Str<'a>, Any<'a>>),
 }
 
 macro_rules! impl_any_from {
@@ -28,7 +29,19 @@ impl_any_from!(Number, Number);
 impl_any_from!(Str<'a>, Str);
 impl_any_from!(bool, Bool);
 impl_any_from!(Vec<Any<'a>>, List);
-impl_any_from!(HashMap<String, Any<'a>>, Map);
+impl_any_from!(HashMap<Str<'a>, Any<'a>>, Map);
+
+impl<'a, const SIZE: usize> From<[Any<'a>; SIZE]> for Any<'a> {
+    fn from(value: [Any<'a>; SIZE]) -> Self {
+        Any::List(value.into())
+    }
+}
+
+impl<'a, const SIZE: usize> From<[(Str<'a>, Any<'a>); SIZE]> for Any<'a> {
+    fn from(value: [(Str<'a>, Any<'a>); SIZE]) -> Self {
+        Any::Map(value.into())
+    }
+}
 
 impl Default for Any<'_> {
     fn default() -> Self {
@@ -75,11 +88,35 @@ impl PartialOrd for Any<'_> {
     }
 }
 
+impl Hash for Any<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Null => state.write(&[0x0 as u8]),
+            Self::Str(str) => str.hash(state),
+            Self::Number(num) => num.hash(state),
+            Self::Bool(b) => b.hash(state),
+            Self::List(list) => list.hash(state),
+            Self::Map(map) => {
+                let mut hash: u64 = 0;
+
+                for (k, v) in map {
+                    let mut h = DefaultHasher::new();
+                    h.write(k.as_str().as_bytes());
+                    v.hash(&mut h);
+                    hash ^= h.finish();
+                }
+
+                state.write_u64(hash);
+            }
+        }
+    }
+}
+
 // Str is a union that allows an owned string or a string reference
 // This allows the underlying container to decide how to return the
 // underlying data, potentially saving heap allocations when &str can
 // be used.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Str<'a> {
     String(String),
     Str(&'a str),
@@ -178,6 +215,12 @@ impl Display for Str<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: This needs to be syntactically correct
         Debug::fmt(self, f)
+    }
+}
+
+impl Hash for Str<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_str().as_bytes());
     }
 }
 
@@ -362,6 +405,16 @@ impl Display for Number {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: This needs to be syntactically correct
         Debug::fmt(self, f)
+    }
+}
+
+impl Hash for Number {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Float(f) => state.write_u64(f.to_bits()),
+            Self::Integer(i) => state.write_i64(*i),
+            Self::UInteger(u) => state.write_u64(*u),
+        }
     }
 }
 

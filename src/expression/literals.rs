@@ -4,7 +4,7 @@ use std::{
     ops::Deref,
 };
 
-use crate::{Any, Container, Number, Parser, Result, Str, parser::STRING_WRAP};
+use crate::{Any, Container, Number, Result, Str, parser::STRING_WRAP};
 
 use super::Expression;
 
@@ -43,6 +43,10 @@ pub struct StringLiteral {
 impl StringLiteral {
     pub fn new(value: String) -> Self {
         StringLiteral { value }
+    }
+
+    pub fn to_owned(self) -> String {
+        self.value
     }
 }
 
@@ -103,6 +107,10 @@ impl NumberLiteral {
     pub fn new(value: Number) -> Self {
         NumberLiteral { value }
     }
+
+    pub fn to_owned(self) -> Number {
+        self.value
+    }
 }
 
 impl<T: Container> Expression<T> for NumberLiteral {
@@ -158,6 +166,10 @@ impl BoolLiteral {
     pub fn new(value: bool) -> Self {
         BoolLiteral { value }
     }
+
+    pub fn to_owned(self) -> bool {
+        self.value
+    }
 }
 
 impl<T: Container> Expression<T> for BoolLiteral {
@@ -192,20 +204,26 @@ pub struct MapLiteral<T: Container> {
 }
 
 impl<T: Container> MapLiteral<T> {
+    pub fn to_owned(self) -> HashMap<String, Box<dyn Expression<T>>> {
+        self.value
+    }
+}
+
+impl<'a, T: Container> MapLiteral<T> {
     pub fn new(value: HashMap<String, Box<dyn Expression<T>>>) -> Self {
         MapLiteral { value }
     }
 }
 
 impl<T: Container> Expression<T> for MapLiteral<T> {
-    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+    fn evaluate<'a: 'b, 'b>(&'a self, c: &'b T) -> Result<Any<'b>> {
         // Any values that return an error are skipped when building the hash and will
         // fail silently.
         Ok(Any::from(
             self.value
                 .iter()
-                .filter_map(|(k, v)| Some((k.to_string(), v.evaluate(d).ok()?)))
-                .collect::<HashMap<String, Any<'b>>>(),
+                .filter_map(|(k, v)| Some((Str::from(k.as_str()), v.evaluate(c).ok()?)))
+                .collect::<HashMap<Str<'a>, Any<'b>>>(),
         ))
     }
 
@@ -214,13 +232,13 @@ impl<T: Container> Expression<T> for MapLiteral<T> {
             value: self
                 .value
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.as_ref().clone()))
+                .map(|(k, v)| (k.clone(), v.as_ref().clone()))
                 .collect(),
         })
     }
 }
 
-impl<T: Container> Display for MapLiteral<T> {
+impl<'a, T: Container> Display for MapLiteral<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.value)
     }
@@ -246,3 +264,64 @@ macro_rules! impl_map_literal_from {
     };
 }
 impl_map_literal_from!(HashMap<String, Box<dyn Expression<T>>>);
+
+#[derive(Debug)]
+pub struct ListLiteral<T: Container> {
+    value: Vec<Box<dyn Expression<T>>>,
+}
+
+impl<T: Container> ListLiteral<T> {
+    pub fn to_owned(self) -> Vec<Box<dyn Expression<T>>> {
+        self.value
+    }
+
+    pub fn new(value: Vec<Box<dyn Expression<T>>>) -> Self {
+        ListLiteral { value }
+    }
+}
+
+impl<T: Container> Expression<T> for ListLiteral<T> {
+    fn evaluate<'a: 'b, 'b>(&'a self, c: &'b T) -> Result<Any<'b>> {
+        // Any values that return an error are skipped when building the hash and will
+        // fail silently.
+        Ok(Any::from(
+            self.value
+                .iter()
+                .filter_map(|v| Some(v.evaluate(c).ok()?))
+                .collect::<Vec<Any<'b>>>(),
+        ))
+    }
+
+    fn clone(&self) -> Box<dyn Expression<T>> {
+        Box::new(ListLiteral {
+            value: self.value.iter().map(|v| v.as_ref().clone()).collect(),
+        })
+    }
+}
+
+impl<'a, T: Container> Display for ListLiteral<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.value)
+    }
+}
+
+impl<T: Container> Deref for ListLiteral<T> {
+    type Target = Vec<Box<dyn Expression<T>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+macro_rules! impl_list_literal_from {
+    ($type:ty) => {
+        impl<'a, T: Container> From<$type> for ListLiteral<T> {
+            fn from(value: $type) -> Self {
+                ListLiteral {
+                    value: value.into(),
+                }
+            }
+        }
+    };
+}
+impl_list_literal_from!(Vec<Box<dyn Expression<T>>>);

@@ -24,7 +24,7 @@ mod test {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::parser::Parser;
+    use crate::{Str, parser::Parser};
     use serde_json::Value;
 
     impl Container for Value {}
@@ -58,10 +58,12 @@ mod test {
         assert_expression!(
             r#"{}"#,
             "{'something': true}",
-            Any::from(HashMap::from([(
-                String::from("something"),
-                Any::from(true)
-            )]))
+            Any::from([(Str::from("something"), Any::from(true))])
+        );
+        assert_expression!(
+            r#"{}"#,
+            "['something', 12]",
+            Any::from([Any::from("something"), Any::from(12)])
         );
     }
 }

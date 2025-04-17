@@ -302,7 +302,7 @@ impl<'a, T: Container> Parser<'a, T> {
             // KEY_WRAP => Ok(Box::new(PathExpression::from_parser(self)?)),
             STRING_WRAP => Ok(Box::new(self.string_literal()?)),
             MAP_WRAP => Ok(Box::new(self.map_literal()?)),
-            // ARRAY_WRAP => Ok(Box::new(ArrayLiteral::from_parser(self)?)),
+            ARRAY_WRAP => Ok(Box::new(self.list_literal()?)),
             // FN_LOWER => Ok(Box::new(StringLower::from_parser(self)?)),
             // FN_UPPER => Ok(Box::new(StringUpper::from_parser(self)?)),
             // FN_LENGTH => Ok(Box::new(StringLength::from_parser(self)?)),
@@ -393,7 +393,7 @@ impl<'a, T: Container> Parser<'a, T> {
             consume_next!(self, MAP_CHILD_SET)?;
             let value = self.expression()?;
 
-            map.insert(key.to_string(), value);
+            map.insert(key.to_owned(), value);
 
             match must_token!(self)? {
                 MAP_WRAP_END => break,
@@ -408,5 +408,29 @@ impl<'a, T: Container> Parser<'a, T> {
         }
 
         Ok(MapLiteral::from(map))
+    }
+
+    fn list_literal(&mut self) -> Result<ListLiteral<T>> {
+        consume_next!(self, ARRAY_WRAP)?;
+
+        let mut list = Vec::new();
+        loop {
+            // pase 'key': <expression>
+            let value = self.expression()?;
+            list.push(value);
+
+            match must_token!(self)? {
+                ARRAY_WRAP_END => break,
+                ARRAY_CHILD_SEP => continue,
+                tok => {
+                    return Err(Error::with_history(
+                        &format!("expected {ARRAY_CHILD_SEP} or {ARRAY_WRAP_END} but got {tok}"),
+                        self.history(),
+                    ));
+                }
+            }
+        }
+
+        Ok(ListLiteral::from(list))
     }
 }
