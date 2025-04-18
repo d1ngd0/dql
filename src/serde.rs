@@ -1,0 +1,130 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Deserializer, de::Visitor};
+
+use crate::{Any, Str};
+
+macro_rules! impl_visitor {
+    ($method:ident, $type:ty, $variant:ident) => {
+        fn $method<E>(self, v: $type) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok($variant::from(v))
+        }
+    };
+}
+
+struct StrVisitor;
+
+impl<'de> Visitor<'de> for StrVisitor {
+    type Value = Str<'de>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "expecting string value")
+    }
+
+    impl_visitor!(visit_borrowed_str, &'de str, Str);
+    impl_visitor!(visit_string, String, Str);
+}
+
+struct AnyVisitor;
+
+impl<'de> Deserialize<'de> for Str<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Str<'de>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrVisitor)
+    }
+}
+
+impl<'de> Visitor<'de> for AnyVisitor {
+    type Value = Any<'de>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "expected value")
+    }
+
+    impl_visitor!(visit_bool, bool, Any);
+    impl_visitor!(visit_i8, i8, Any);
+    impl_visitor!(visit_i16, i16, Any);
+    impl_visitor!(visit_i32, i32, Any);
+    impl_visitor!(visit_i64, i64, Any);
+    impl_visitor!(visit_u8, u8, Any);
+    impl_visitor!(visit_u16, u16, Any);
+    impl_visitor!(visit_u32, u32, Any);
+    impl_visitor!(visit_u64, u64, Any);
+    impl_visitor!(visit_f32, f32, Any);
+    impl_visitor!(visit_f64, f64, Any);
+    impl_visitor!(visit_borrowed_bytes, &'de [u8], Any);
+    impl_visitor!(visit_byte_buf, Vec<u8>, Any);
+    impl_visitor!(visit_borrowed_str, &'de str, Any);
+    impl_visitor!(visit_string, String, Any);
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(Any::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(Any::Null)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut list: Vec<Any<'de>> = Vec::new();
+
+        while let Some(v) = seq.next_element()? {
+            list.push(v);
+        }
+
+        Ok(Any::from(list))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut m: HashMap<Str<'de>, Any<'de>> = HashMap::new();
+
+        while let Some((k, v)) = map.next_entry()? {
+            m.insert(k, v);
+        }
+
+        Ok(Any::from(m))
+    }
+
+    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::EnumAccess<'de>,
+    {
+        // we don't care about the variant, we are all powerfull
+        // and can handle ANY TYPE!!!! BOW DOWN BEFORE ME AND TREMBLE
+        let (bookmark, _variant) = data.variant()?;
+        Ok(bookmark)
+    }
+
+    fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Any<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Any<'de>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(AnyVisitor)
+    }
+}

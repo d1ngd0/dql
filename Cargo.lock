@@ -23,6 +23,7 @@ version = "0.0.1"
 dependencies = [
  "dyn-clone",
  "parse_duration",
+ "serde",
  "serde_json",
 ]
 

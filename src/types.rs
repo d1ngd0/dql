@@ -10,6 +10,7 @@ use std::{num::Wrapping, ops::Add};
 pub enum Any<'a> {
     Null,
     Str(Str<'a>),
+    Bytes(Bytes<'a>),
     Number(Number),
     Bool(bool),
     List(Vec<Any<'a>>),
@@ -27,6 +28,7 @@ macro_rules! impl_any_from {
 }
 impl_any_from!(Number, Number);
 impl_any_from!(Str<'a>, Str);
+impl_any_from!(Bytes<'a>, Bytes);
 impl_any_from!(bool, Bool);
 impl_any_from!(Vec<Any<'a>>, List);
 impl_any_from!(HashMap<Str<'a>, Any<'a>>, Map);
@@ -62,6 +64,7 @@ impl PartialEq for Any<'_> {
         match (self, other) {
             (Self::Null, Self::Null) => true,
             (Self::Str(lhs), Self::Str(rhs)) => lhs.eq(rhs),
+            (Self::Bytes(lhs), Self::Bytes(rhs)) => lhs.eq(rhs),
             (Self::Number(lhs), Self::Number(rhs)) => lhs.eq(rhs),
             (Self::Bool(lhs), Self::Bool(rhs)) => lhs.eq(rhs),
             (Self::List(lhs), Self::List(rhs)) => lhs.eq(rhs),
@@ -80,6 +83,7 @@ impl PartialOrd for Any<'_> {
             (Self::Null, _) => Some(Ordering::Less),
             (_, Self::Null) => Some(Ordering::Greater),
             (Self::Str(lhs), Self::Str(rhs)) => lhs.partial_cmp(rhs),
+            (Self::Bytes(lhs), Self::Bytes(rhs)) => lhs.partial_cmp(rhs),
             (Self::Number(lhs), Self::Number(rhs)) => lhs.partial_cmp(rhs),
             (Self::Bool(lhs), Self::Bool(rhs)) => Some(lhs.cmp(rhs)),
             (Self::List(lhs), Self::List(rhs)) => lhs.partial_cmp(rhs),
@@ -93,6 +97,7 @@ impl Hash for Any<'_> {
         match self {
             Self::Null => state.write(&[0x0 as u8]),
             Self::Str(str) => str.hash(state),
+            Self::Bytes(b) => b.hash(state),
             Self::Number(num) => num.hash(state),
             Self::Bool(b) => b.hash(state),
             Self::List(list) => list.hash(state),
@@ -221,6 +226,118 @@ impl Display for Str<'_> {
 impl Hash for Str<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write(self.as_str().as_bytes());
+    }
+}
+
+// Bytes is a union that allows an owned string or a string reference
+// This allows the underlying container to decide how to return the
+// underlying data, potentially saving heap allocations when &str can
+// be used.
+#[derive(Debug, Clone)]
+pub enum Bytes<'a> {
+    Bytes(Vec<u8>),
+    Ref(&'a [u8]),
+}
+
+impl From<Bytes<'_>> for Vec<u8> {
+    fn from(value: Bytes) -> Self {
+        match value {
+            Bytes::Bytes(v) => v,
+            Bytes::Ref(v) => Vec::from(v),
+        }
+    }
+}
+
+impl<'a> From<&'a Bytes<'a>> for &'a [u8] {
+    fn from(value: &'a Bytes<'a>) -> Self {
+        match value {
+            Bytes::Bytes(v) => v.as_ref(),
+            Bytes::Ref(v) => v,
+        }
+    }
+}
+
+macro_rules! impl_string_from {
+    ($type:ty, $variant:ident) => {
+        impl<'a> From<$type> for Bytes<'a> {
+            fn from(value: $type) -> Self {
+                Bytes::$variant(value)
+            }
+        }
+
+        impl<'a> From<$type> for Any<'a> {
+            fn from(value: $type) -> Self {
+                Any::Bytes(Bytes::$variant(value))
+            }
+        }
+    };
+}
+
+impl_string_from!(Vec<u8>, Bytes);
+impl_string_from!(&'a [u8], Ref);
+impl_string_from!(&'a &Vec<u8>, Ref);
+
+// TryFrom makes it possible to turn an Any into a Bytes if the underlying
+// type matches, if the value can not be turned into a str it will return
+// Error::InvalidType
+impl<'a> TryFrom<Any<'a>> for Bytes<'a> {
+    type Error = Error;
+
+    fn try_from(value: Any<'a>) -> Result<Self, Self::Error> {
+        match value {
+            Any::Bytes(v) => Ok(v),
+            _ => Err(Error::InvalidType),
+        }
+    }
+}
+
+impl<'a> Bytes<'a> {
+    // as_str returns a reference to the underlying string
+    pub fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Bytes(v) => v.as_ref(),
+            Self::Ref(v) => v,
+        }
+    }
+
+    // as string consumes the Bytes and returns a Vec, in the case
+    // of an underlying &str it will copy the data and cause a heap
+    // allocation.
+    pub fn as_vec(self) -> Vec<u8> {
+        match self {
+            Self::Bytes(v) => v,
+            Self::Ref(v) => Vec::from(v),
+        }
+    }
+}
+
+// PartialEq makes it possible to compare two strings
+impl PartialEq for Bytes<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for Bytes<'_> {}
+
+// PartialOrd implements >, <, >= and <=
+impl PartialOrd for Bytes<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.as_ref().cmp(other.as_ref()))
+    }
+}
+
+// Display makes it possible to show the string value
+impl Display for Bytes<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO: This needs to be syntactically correct
+        Debug::fmt(self, f)
+    }
+}
+
+impl Hash for Bytes<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_ref());
     }
 }
 

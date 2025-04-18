@@ -8,6 +8,7 @@ description = "data agnostic query language"
 [dependencies]
 dyn-clone = "1.0.19"
 parse_duration = "2.1.1"
+serde = "1.0.219"
 
 [dev-dependencies]
 serde_json = "1.0.140"

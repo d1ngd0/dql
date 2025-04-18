@@ -3,6 +3,7 @@ mod error;
 mod expression;
 mod lexor;
 mod parser;
+mod serde;
 mod types;
 
 pub use container::*;
