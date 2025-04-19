@@ -1,42 +1,35 @@
 use std::fmt::Display;
 
-use crate::{Any, Container, Number, Result};
+use crate::{Any, Container, Expr, Number, Result};
 
 use super::Expression;
 
 // Math expressions
 macro_rules! impl_expression_math_op {
     ($name:ident, $op:tt) => {
-        #[derive(Debug)]
-        pub struct $name<T: Container> {
-            left: Box<dyn Expression<T>>,
-            right: Box<dyn Expression<T>>,
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            left: Box<Expr>,
+            right: Box<Expr>,
         }
 
-        impl<T: Container> $name<T> {
-            pub fn new(left: Box<dyn Expression<T>>, right: Box<dyn Expression<T>>) -> Self {
-                Self { left, right }
+        impl $name {
+            pub fn new(left: Expr, right: Expr) -> Self {
+                Self { left: Box::new(left), right: Box::new(right) }
             }
         }
 
-        impl<T: Container> Expression<T> for $name<T> {
-            fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+        impl Expression for $name {
+            fn evaluate<'a: 'b, 'b, T: Container>(&'a self, d: &'b T) -> Result<Any<'b>> {
                 let left: Number = self.left.evaluate(d)?.try_into()?;
                 let right: Number = self.right.evaluate(d)?.try_into()?;
 
                 Ok(Any::Number(left $op right))
             }
 
-            fn clone(&self) -> Box<dyn Expression<T>> {
-                Box::new(Self {
-                    left: self.left.clone(),
-                    right: self.right.clone(),
-
-                })
-            }
         }
 
-        impl<T: Container> Display for $name<T> {
+        impl Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{} {} {}", self.left, stringify!($op), self.right)
             }
@@ -50,67 +43,56 @@ impl_expression_math_op!(MultiplyExpression, *);
 impl_expression_math_op!(AddExpression, +);
 impl_expression_math_op!(SubtractExpression, -);
 
-#[derive(Debug)]
-pub struct ExponentExpression<T: Container> {
-    left: Box<dyn Expression<T>>,
-    right: Box<dyn Expression<T>>,
+#[derive(Debug, Clone)]
+pub struct ExponentExpression {
+    left: Box<Expr>,
+    right: Box<Expr>,
 }
 
-impl<T: Container> ExponentExpression<T> {
-    pub fn new(
-        left: Box<dyn Expression<T>>,
-        right: Box<dyn Expression<T>>,
-    ) -> ExponentExpression<T> {
-        ExponentExpression { left, right }
+impl ExponentExpression {
+    pub fn new(left: Expr, right: Expr) -> ExponentExpression {
+        ExponentExpression {
+            left: Box::new(left),
+            right: Box::new(right),
+        }
     }
 }
 
-impl<T: Container> Expression<T> for ExponentExpression<T> {
-    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+impl Expression for ExponentExpression {
+    fn evaluate<'a: 'b, 'b, T: Container>(&'a self, d: &'b T) -> Result<Any<'b>> {
         let left: Number = self.left.evaluate(d)?.try_into()?;
         let right: Number = self.right.evaluate(d)?.try_into()?;
 
         Ok(Any::from(i64::from(left).pow(u32::from(right))))
     }
-
-    fn clone(&self) -> Box<dyn Expression<T>> {
-        Box::new(Self {
-            left: self.left.clone(),
-            right: self.right.clone(),
-        })
-    }
 }
 
-impl<T: Container> Display for ExponentExpression<T> {
+impl Display for ExponentExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {} {}", self.left, stringify!(EXPONENT), self.right)
     }
 }
 
-#[derive(Debug)]
-pub struct SubExpression<T: Container> {
-    expr: Box<dyn Expression<T>>,
+#[derive(Debug, Clone)]
+pub struct SubExpression {
+    expr: Box<Expr>,
 }
 
-impl<T: Container> SubExpression<T> {
-    pub fn new(expr: Box<dyn Expression<T>>) -> Self {
-        Self { expr }
+impl SubExpression {
+    pub fn new(expr: Expr) -> Self {
+        Self {
+            expr: Box::new(expr),
+        }
     }
 }
 
-impl<T: Container> Expression<T> for SubExpression<T> {
-    fn evaluate<'a: 'b, 'b>(&'a self, d: &'b T) -> Result<Any<'b>> {
+impl Expression for SubExpression {
+    fn evaluate<'a: 'b, 'b, T: Container>(&'a self, d: &'b T) -> Result<Any<'b>> {
         self.expr.evaluate(d)
     }
-
-    fn clone(&self) -> Box<dyn Expression<T>> {
-        Box::new(Self {
-            expr: self.expr.clone(),
-        })
-    }
 }
 
-impl<T: Container> Display for SubExpression<T> {
+impl Display for SubExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({})", self.expr)
     }

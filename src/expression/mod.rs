@@ -10,14 +10,59 @@ use crate::{Any, Container, error::Result};
 // Expression is a trait that takes in a dapt packet and returns an
 // optional value. This value can be Any type, which is what a dapt packet
 // can return.
-pub trait Expression<T>: Display + Debug + Send + Sync
-where
-    T: Container,
-{
-    fn evaluate<'a: 'b, 'b>(&'a self, c: &'b T) -> Result<Any<'b>>;
-
-    fn clone(&self) -> Box<dyn Expression<T>>;
+pub trait Expression: Display + Debug + Send + Sync + Clone {
+    fn evaluate<'a: 'b, 'b, T: Container>(&'a self, c: &'b T) -> Result<Any<'b>>;
 }
+
+macro_rules! expr_impl {
+    ($( $i:ident ),* ) => {
+        #[derive(Debug, Clone)]
+        pub enum Expr {
+            $( $i($i), )*
+        }
+
+        impl Expr {
+            fn evaluate<'a: 'b, 'b, T: Container>(&'a self, c: &'b T) -> Result<Any<'b>> {
+                match self {
+                    $( Expr::$i(expr) => expr.evaluate(c), )*
+                }
+            }
+        }
+
+        impl Display for Expr {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+                match self {
+                    $( Expr::$i(expr) => Display::fmt(expr, f), )*
+                }
+            }
+        }
+
+        $(
+            impl From<$i> for Expr {
+                fn from(val: $i) -> Self {
+                    Expr::$i(val)
+                }
+            }
+        )*
+    };
+}
+
+expr_impl!(
+    StringLiteral,
+    NumberLiteral,
+    MapLiteral,
+    ListLiteral,
+    BoolLiteral,
+    NullExpression,
+    ModulusExpression,
+    DivideExpression,
+    MultiplyExpression,
+    AddExpression,
+    SubtractExpression,
+    SubExpression,
+    ExponentExpression
+);
 
 #[cfg(test)]
 mod test {
@@ -31,7 +76,7 @@ mod test {
         ( $source:expr, $expr:expr, $expected:expr) => {
             let mut parser = Parser::from($expr);
             let expr = parser.expression().unwrap();
-            let d: Any = serde_json::from_str($source).unwrap();
+            let d: Value = serde_json::from_str($source).unwrap();
             let result = expr.evaluate(&d).unwrap();
             assert_eq!(result, $expected);
         };

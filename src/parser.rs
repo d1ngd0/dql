@@ -69,9 +69,8 @@ pub const AGGREGATION_AVG: &str = "AVG";
 
 // Parser is used to parse a query string into a query struct, it produces all
 // sorts of interior structs as well.
-pub struct Parser<'a, T: Container> {
+pub struct Parser<'a> {
     lex: Lexer<'a>,
-    _p: PhantomData<T>,
 }
 
 // must_token consumes and returns the next token, if we have run out
@@ -155,16 +154,15 @@ macro_rules! consume_next {
 
 // TODO: this is stupid, and we need to change this to a parser
 // builder
-impl<'a, T: Container> From<&'a str> for Parser<'a, T> {
-    fn from(s: &'a str) -> Parser<'a, T> {
+impl<'a> From<&'a str> for Parser<'a> {
+    fn from(s: &'a str) -> Parser<'a> {
         Parser {
             lex: Lexer::from(s),
-            _p: PhantomData,
         }
     }
 }
 
-impl<'a, T: Container> Parser<'a, T> {
+impl<'a> Parser<'a> {
     // consumed returns a History object, which lets the caller know where
     // the head of the lexor is. This is useful for creating error messages
     // since you can point out where problems are
@@ -204,14 +202,14 @@ impl<'a, T: Container> Parser<'a, T> {
     }
 
     // expression parses an expression, returning it as a Box<dyn Expression>
-    pub fn expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+    pub fn expression(&mut self) -> Result<Expr> {
         self.parse_expression_add()
     }
 
     // parse_expression_add makes it possible to support `Order Of Operations`.
     // This function handles adding and subtracting linearly, and passes lower
     // scopes into the multiply function
-    fn parse_expression_add(&mut self) -> Result<Box<dyn Expression<T>>> {
+    fn parse_expression_add(&mut self) -> Result<Expr> {
         let mut expr = self.parse_expression_multiply()?;
 
         loop {
@@ -220,12 +218,12 @@ impl<'a, T: Container> Parser<'a, T> {
                 ADD => {
                     consume!(self);
                     let right = self.parse_expression_multiply()?;
-                    expr = Box::new(AddExpression::new(expr, right))
+                    expr = Expr::from(AddExpression::new(expr, right))
                 }
                 MINUS => {
                     consume!(self);
                     let right = self.parse_expression_multiply()?;
-                    expr = Box::new(SubtractExpression::new(expr, right))
+                    expr = Expr::from(SubtractExpression::new(expr, right))
                 }
                 _ => break,
             }
@@ -237,7 +235,7 @@ impl<'a, T: Container> Parser<'a, T> {
     // parse_expression_multiply makes it possible to support `Order Of Operations`.
     // This function handles multipling, dividing, remainder linearly, and passes lower
     // scopes into the exponent function
-    fn parse_expression_multiply(&mut self) -> Result<Box<dyn Expression<T>>> {
+    fn parse_expression_multiply(&mut self) -> Result<Expr> {
         let mut expr = self.parse_expression_exponent()?;
 
         loop {
@@ -246,17 +244,17 @@ impl<'a, T: Container> Parser<'a, T> {
                 MULTIPLY => {
                     consume!(self);
                     let right = self.parse_expression_exponent()?;
-                    expr = Box::new(MultiplyExpression::new(expr, right))
+                    expr = Expr::from(MultiplyExpression::new(expr, right))
                 }
                 DIVIDE => {
                     consume!(self);
                     let right = self.parse_expression_exponent()?;
-                    expr = Box::new(DivideExpression::new(expr, right))
+                    expr = Expr::from(DivideExpression::new(expr, right))
                 }
                 MODULUS => {
                     consume!(self);
                     let right = self.parse_expression_exponent()?;
-                    expr = Box::new(ModulusExpression::new(expr, right))
+                    expr = Expr::from(ModulusExpression::new(expr, right))
                 }
                 _ => break,
             }
@@ -268,7 +266,7 @@ impl<'a, T: Container> Parser<'a, T> {
     // parse_expression_exponent makes it possible to support `Order Of Operations`.
     // This function handles exponents linearly, and passes execution into the
     // parse_expression function
-    fn parse_expression_exponent(&mut self) -> Result<Box<dyn Expression<T>>> {
+    fn parse_expression_exponent(&mut self) -> Result<Expr> {
         let mut expr = self.parse_expression()?;
 
         loop {
@@ -277,7 +275,7 @@ impl<'a, T: Container> Parser<'a, T> {
                 EXPONENT => {
                     consume!(self);
                     let right = self.parse_expression()?;
-                    expr = Box::new(ExponentExpression::new(expr, right))
+                    expr = Expr::from(ExponentExpression::new(expr, right))
                 }
                 _ => break,
             }
@@ -289,7 +287,7 @@ impl<'a, T: Container> Parser<'a, T> {
     // parse_expression is used to parse expressions without evaluating math
     // in other words this handles all the things you would expect `expression`
     // to handle if you didn't have to deal with math.
-    fn parse_expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+    fn parse_expression(&mut self) -> Result<Expr> {
         let left = peak!(self).unwrap_or_default();
 
         match left.to_uppercase().as_str() {
@@ -297,12 +295,12 @@ impl<'a, T: Container> Parser<'a, T> {
                 consume!(self);
                 let expr = self.expression()?;
                 consume_next!(self, SUB_EXPR_CLOSE)?;
-                Ok(Box::new(SubExpression::new(expr)))
+                Ok(Expr::from(SubExpression::new(expr)))
             }
             // KEY_WRAP => Ok(Box::new(PathExpression::from_parser(self)?)),
-            STRING_WRAP => Ok(Box::new(self.string_literal()?)),
-            MAP_WRAP => Ok(Box::new(self.map_literal()?)),
-            ARRAY_WRAP => Ok(Box::new(self.list_literal()?)),
+            STRING_WRAP => Ok(Expr::from(self.string_literal()?)),
+            MAP_WRAP => Ok(Expr::from(self.map_literal()?)),
+            ARRAY_WRAP => Ok(Expr::from(self.list_literal()?)),
             // FN_LOWER => Ok(Box::new(StringLower::from_parser(self)?)),
             // FN_UPPER => Ok(Box::new(StringUpper::from_parser(self)?)),
             // FN_LENGTH => Ok(Box::new(StringLength::from_parser(self)?)),
@@ -311,17 +309,17 @@ impl<'a, T: Container> Parser<'a, T> {
             // FN_TRIM_RIGHT => Ok(Box::new(StringTrimRight::from_parser(self)?)),
             // FN_CONCAT => Ok(Box::new(StringConcat::from_parser(self)?)),
             // FN_SPLIT => Ok(Box::new(StringSplit::from_parser(self)?)),
-            TRUE => Ok(Box::new(self.bool_literal()?)),
-            FALSE => Ok(Box::new(self.bool_literal()?)),
-            NULL => Ok(Box::new(self.null()?)),
+            TRUE => Ok(Expr::from(self.bool_literal()?)),
+            FALSE => Ok(Expr::from(self.bool_literal()?)),
+            NULL => Ok(Expr::from(self.null()?)),
             _ => self.parse_unwrapped_expression(),
         }
     }
 
-    fn parse_unwrapped_expression(&mut self) -> Result<Box<dyn Expression<T>>> {
+    fn parse_unwrapped_expression(&mut self) -> Result<Expr> {
         let mut chars = peak!(self).unwrap_or_default().chars();
         match chars.next() {
-            Some('0'..='9') | Some('-') => Ok(Box::new(self.number_literal()?)),
+            Some('0'..='9') | Some('-') => Ok(Expr::from(self.number_literal()?)),
             // _ => Ok(Box::new(PathExpression::from_parser(self)?)),
             _ => todo!(),
         }
@@ -383,7 +381,7 @@ impl<'a, T: Container> Parser<'a, T> {
         }))
     }
 
-    fn map_literal(&mut self) -> Result<MapLiteral<T>> {
+    fn map_literal(&mut self) -> Result<MapLiteral> {
         consume_next!(self, MAP_WRAP)?;
 
         let mut map = HashMap::new();
@@ -410,7 +408,7 @@ impl<'a, T: Container> Parser<'a, T> {
         Ok(MapLiteral::from(map))
     }
 
-    fn list_literal(&mut self) -> Result<ListLiteral<T>> {
+    fn list_literal(&mut self) -> Result<ListLiteral> {
         consume_next!(self, ARRAY_WRAP)?;
 
         let mut list = Vec::new();
