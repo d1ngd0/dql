@@ -76,7 +76,7 @@ mod test {
         ( $source:expr, $expr:expr, $expected:expr) => {
             let mut parser = Parser::from($expr);
             let expr = parser.expression().unwrap();
-            let d: Value = serde_json::from_str($source).unwrap();
+            let d: Any = serde_json::from_str($source).unwrap();
             let result = expr.evaluate(&d).unwrap();
             assert_eq!(result, $expected);
         };

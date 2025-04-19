@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Container, Error};
 use std::cmp::Ordering;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::{Div, Mul, Rem, Sub};
@@ -16,6 +16,8 @@ pub enum Any<'a> {
     List(Vec<Any<'a>>),
     Map(HashMap<Str<'a>, Any<'a>>),
 }
+
+impl Container for Any<'_> {}
 
 macro_rules! impl_any_from {
     ($type:ty, $variant:ident) => {
