@@ -75,38 +75,33 @@ mod test {
     macro_rules! assert_expression {
         ( $source:expr, $expr:expr, $expected:expr) => {
             let mut parser = Parser::from($expr);
-            let expr = parser.expression().unwrap();
+            let expr = parser.expression()?;
             let d: Any = serde_json::from_str($source).unwrap();
-            let result = expr.evaluate(&d).unwrap();
+            let result = expr.evaluate(&d)?;
+            let result = serde_json::to_string(&result).unwrap();
             assert_eq!(result, $expected);
         };
     }
 
     #[test]
-    fn test_expression() {
-        assert_expression!(r#"{}"#, "NULL", Any::Null);
-        assert_expression!(r#"{}"#, "''", Any::from(""));
-        assert_expression!(r#"{}"#, "'hello'", Any::from("hello"));
-        assert_expression!(r#"{}"#, "10", Any::from(10));
-        assert_expression!(r#"{}"#, "10+25", Any::from(35));
-        assert_expression!(r#"{}"#, "25/2", Any::from(12));
-        assert_expression!(r#"{}"#, "25.0/2", Any::from(12.5));
-        assert_expression!(r#"{}"#, "25.0-2", Any::from(23));
-        assert_expression!(r#"{}"#, "25.0^2", Any::from(625));
-        assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
-        assert_expression!(r#"{}"#, "25.0*2", Any::from(50));
-        assert_expression!(r#"{}"#, "34-66*11+(45^2)/10.0", Any::from(-489.5));
-        assert_expression!(r#"{}"#, "true", Any::from(true));
-        assert_expression!(r#"{}"#, "false", Any::from(false));
-        assert_expression!(
-            r#"{}"#,
-            "{'something': true}",
-            Any::from([(Str::from("something"), Any::from(true))])
-        );
-        assert_expression!(
-            r#"{}"#,
-            "['something', 12]",
-            Any::from([Any::from("something"), Any::from(12)])
-        );
+    fn test_expression() -> Result<()> {
+        assert_expression!(r#"{}"#, "NULL", "null");
+        assert_expression!(r#"{}"#, "''", "\"\"");
+        assert_expression!(r#"{}"#, "'hello'", "\"hello\"");
+        assert_expression!(r#"{}"#, "10", "10");
+        assert_expression!(r#"{}"#, "10+25", "35");
+        assert_expression!(r#"{}"#, "25/2", "12");
+        assert_expression!(r#"{}"#, "25.0/2", "12.5");
+        assert_expression!(r#"{}"#, "25.0-2", "23.0");
+        assert_expression!(r#"{}"#, "25.0^2", "625");
+        assert_expression!(r#"{}"#, "25.0*2", "50.0");
+        assert_expression!(r#"{}"#, "25.0*2", "50.0");
+        assert_expression!(r#"{}"#, "34-66*11+(45^2)/10.0", "-489.5");
+        assert_expression!(r#"{}"#, "true", "true");
+        assert_expression!(r#"{}"#, "false", "false");
+        assert_expression!(r#"{}"#, "{'something': true}", r#"{"something":true}"#);
+        assert_expression!(r#"{}"#, "['something', 12]", r#"["something",12]"#);
+
+        Ok(())
     }
 }

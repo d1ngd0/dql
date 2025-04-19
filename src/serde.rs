@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer, de::Visitor};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::Visitor,
+    ser::{SerializeMap, SerializeSeq},
+};
 
-use crate::{Any, Str};
+use crate::{Any, Bytes, Number, Str};
 
 macro_rules! impl_visitor {
     ($method:ident, $type:ty, $variant:ident) => {
@@ -126,5 +130,65 @@ impl<'de> Deserialize<'de> for Any<'de> {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_any(AnyVisitor)
+    }
+}
+
+impl Serialize for Any<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Any::Null => serializer.serialize_none(),
+            Any::Str(str) => str.serialize(serializer),
+            Any::Bytes(bts) => bts.serialize(serializer),
+            Any::Number(num) => num.serialize(serializer),
+            Any::Bool(bool) => serializer.serialize_bool(*bool),
+            Any::List(list) => {
+                let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                for item in list {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            Any::Map(map) => {
+                let mut seq = serializer.serialize_map(Some(map.len()))?;
+                for (key, item) in map {
+                    seq.serialize_entry(key, item)?;
+                }
+                seq.end()
+            }
+        }
+    }
+}
+
+impl Serialize for Str<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl Serialize for Bytes<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_ref())
+    }
+}
+
+impl Serialize for Number {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Number::Float(f) => serializer.serialize_f64(*f),
+            Number::Integer(i) => serializer.serialize_i64(*i),
+            Number::UInteger(u) => serializer.serialize_u64(*u),
+        }
     }
 }
