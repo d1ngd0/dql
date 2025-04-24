@@ -17,23 +17,86 @@ pub enum Any<'a> {
     Map(HashMap<Str<'a>, Any<'a>>),
 }
 
+impl<'a> Any<'a> {
+    pub fn as_str(&'a self) -> Result<&'a str, Error> {
+        match self {
+            Any::Str(v) => Ok(v.as_str()),
+            _ => Err(Error::InvalidType),
+        }
+    }
+
+    pub fn as_slice(&'a self) -> Result<&'a [u8], Error> {
+        match self {
+            Any::Bytes(v) => Ok(v.as_ref()),
+            _ => Err(Error::InvalidType),
+        }
+    }
+}
+
 impl Container for Any<'_> {}
 
 macro_rules! impl_any_from {
     ($type:ty, $variant:ident) => {
         impl<'a> From<$type> for Any<'a> {
             fn from(value: $type) -> Self {
-                Any::$variant(value)
+                Any::$variant(value.into())
+            }
+        }
+
+        impl<'a> TryFrom<Any<'a>> for $type {
+            type Error = Error;
+
+            fn try_from(value: Any<'a>) -> Result<Self, Self::Error> {
+                match value {
+                    Any::$variant(v) => Ok(v.into()),
+                    _ => Err(Error::InvalidType),
+                }
             }
         }
     };
 }
 impl_any_from!(Number, Number);
+impl_any_from!(usize, Number);
+impl_any_from!(u64, Number);
+impl_any_from!(u32, Number);
+impl_any_from!(u16, Number);
+impl_any_from!(u8, Number);
+impl_any_from!(isize, Number);
+impl_any_from!(i64, Number);
+impl_any_from!(i32, Number);
+impl_any_from!(i16, Number);
+impl_any_from!(i8, Number);
+impl_any_from!(f64, Number);
+impl_any_from!(f32, Number);
 impl_any_from!(Str<'a>, Str);
+impl_any_from!(String, Str);
 impl_any_from!(Bytes<'a>, Bytes);
+impl_any_from!(Vec<u8>, Bytes);
 impl_any_from!(bool, Bool);
 impl_any_from!(Vec<Any<'a>>, List);
 impl_any_from!(HashMap<Str<'a>, Any<'a>>, Map);
+
+impl<'a> TryFrom<&'a Any<'a>> for &'a str {
+    type Error = Error;
+
+    fn try_from(value: &'a Any<'a>) -> Result<Self, Self::Error> {
+        match value {
+            Any::Str(v) => Ok(v.into()),
+            _ => Err(Error::InvalidType),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Any<'a>> for &'a [u8] {
+    type Error = Error;
+
+    fn try_from(value: &'a Any<'a>) -> Result<Self, Self::Error> {
+        match value {
+            Any::Bytes(v) => Ok(v.into()),
+            _ => Err(Error::InvalidType),
+        }
+    }
+}
 
 impl<'a, const SIZE: usize> From<[Any<'a>; SIZE]> for Any<'a> {
     fn from(value: [Any<'a>; SIZE]) -> Self {
@@ -129,20 +192,20 @@ pub enum Str<'a> {
     Str(&'a str),
 }
 
-impl From<Str<'_>> for String {
-    fn from(value: Str) -> Self {
-        match value {
-            Str::String(v) => v,
-            Str::Str(v) => String::from(v),
-        }
-    }
-}
-
 impl<'a> From<&'a Str<'a>> for &'a str {
     fn from(value: &'a Str<'a>) -> Self {
         match value {
             Str::String(v) => v.as_str(),
             Str::Str(v) => v,
+        }
+    }
+}
+
+impl<'a> From<Str<'a>> for String {
+    fn from(value: Str<'a>) -> Self {
+        match value {
+            Str::Str(v) => v.into(),
+            Str::String(v) => v,
         }
     }
 }
@@ -154,32 +217,12 @@ macro_rules! impl_string_from {
                 Str::$variant(value)
             }
         }
-
-        impl<'a> From<$type> for Any<'a> {
-            fn from(value: $type) -> Self {
-                Any::Str(Str::$variant(value))
-            }
-        }
     };
 }
 
 impl_string_from!(String, String);
 impl_string_from!(&'a str, Str);
 impl_string_from!(&'a String, Str);
-
-// TryFrom makes it possible to turn an Any into a Str if the underlying
-// type matches, if the value can not be turned into a str it will return
-// Error::InvalidType
-impl<'a> TryFrom<Any<'a>> for Str<'a> {
-    type Error = Error;
-
-    fn try_from(value: Any<'a>) -> Result<Self, Self::Error> {
-        match value {
-            Any::Str(v) => Ok(v),
-            _ => Err(Error::InvalidType),
-        }
-    }
-}
 
 impl<'a> Str<'a> {
     // as_str returns a reference to the underlying string
@@ -266,32 +309,12 @@ macro_rules! impl_string_from {
                 Bytes::$variant(value)
             }
         }
-
-        impl<'a> From<$type> for Any<'a> {
-            fn from(value: $type) -> Self {
-                Any::Bytes(Bytes::$variant(value))
-            }
-        }
     };
 }
 
 impl_string_from!(Vec<u8>, Bytes);
 impl_string_from!(&'a [u8], Ref);
 impl_string_from!(&'a &Vec<u8>, Ref);
-
-// TryFrom makes it possible to turn an Any into a Bytes if the underlying
-// type matches, if the value can not be turned into a str it will return
-// Error::InvalidType
-impl<'a> TryFrom<Any<'a>> for Bytes<'a> {
-    type Error = Error;
-
-    fn try_from(value: Any<'a>) -> Result<Self, Self::Error> {
-        match value {
-            Any::Bytes(v) => Ok(v),
-            _ => Err(Error::InvalidType),
-        }
-    }
-}
 
 impl<'a> Bytes<'a> {
     // as_str returns a reference to the underlying string
@@ -363,20 +386,6 @@ pub enum Number {
     UInteger(u64),
 }
 
-// TryFrom makes it possible to turn an Any into a Number if the underlying
-// type matches, if the value can not be turned into a Number it will return
-// Error::InvalidType
-impl TryFrom<Any<'_>> for Number {
-    type Error = Error;
-
-    fn try_from(value: Any<'_>) -> Result<Self, Self::Error> {
-        match value {
-            Any::Number(v) => Ok(v),
-            _ => Err(Error::InvalidType),
-        }
-    }
-}
-
 macro_rules! impl_number_op {
     ($name:ident, $fn:ident, $op:tt) => {
         impl $name for Number {
@@ -420,12 +429,6 @@ macro_rules! impl_number_from {
         impl From<$type> for Number {
             fn from(orig: $type) -> Self {
                 Number::$variant(orig as $cast)
-            }
-        }
-
-        impl From<$type> for Any<'_> {
-            fn from(orig: $type) -> Self {
-                Any::Number(Number::$variant(orig as $cast))
             }
         }
     };

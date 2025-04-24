@@ -1,9 +1,11 @@
 mod literals;
 mod math;
+mod string;
 
 pub use literals::*;
 pub use math::*;
 use std::fmt::{Debug, Display};
+pub use string::*;
 
 use crate::{Any, Container, error::Result};
 

@@ -1,1 +1,3 @@
-pub trait Container: std::fmt::Debug + Sync + Send {}
+use std::fmt::{Debug, Display};
+
+pub trait Container: Debug + Display + Sync + Send {}
