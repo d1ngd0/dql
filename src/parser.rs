@@ -1,6 +1,4 @@
-use std::{collections::HashMap, marker::PhantomData, time::Duration};
-
-use crate::{Container, Number};
+use std::{cell::RefCell, collections::HashMap, time::Duration};
 
 use super::{Error, History, Result, expression::*, lexor::Lexer};
 
@@ -70,7 +68,7 @@ pub const AGGREGATION_AVG: &str = "AVG";
 // Parser is used to parse a query string into a query struct, it produces all
 // sorts of interior structs as well.
 pub struct Parser<'a> {
-    lex: Lexer<'a>,
+    lex: RefCell<Lexer<'a>>,
 }
 
 // must_token consumes and returns the next token, if we have run out
@@ -79,34 +77,19 @@ pub struct Parser<'a> {
 macro_rules! must_token {
     ( $source:ident ) => {
         $source
-            .lex
             .token()
-            .ok_or_else(|| Error::unexpected_eof($source.history()))
+            .ok_or_else(|| crate::Error::unexpected_eof($source.history()))
     };
 }
-
-// peak is a shortcut for self.lex.peak and it returns the next
-// token from the tokenizer without consuming it
-macro_rules! peak {
-    ( $source:ident ) => {
-        $source.lex.peak()
-    };
-}
-
-// token returns the next token from the tokenizer, it *does* consume
-// the token, moving the head forward.
-macro_rules! token {
-    ( $source:ident ) => {
-        $source.lex.token()
-    };
-}
+pub(crate) use must_token;
 
 // consume just consumes the next token, no questions asked.
 macro_rules! consume {
     ( $source:ident ) => {{
-        let _ = $source.lex.token();
+        let _ = $source.token();
     }};
 }
+pub(crate) use consume;
 
 // is_next will check to see if the next value matches the supplied
 // token without consuming it. This function is not case sensative
@@ -118,6 +101,7 @@ macro_rules! is_next {
             .is_some()
     };
 }
+pub(crate) use is_next;
 
 // continue_if checks if the tok supplies as an arguement is the next
 // token, if so it consumes is and returns true, if it doesn't it
@@ -126,24 +110,26 @@ macro_rules! is_next {
 // each aggregation. This function *is not* case sensitive
 macro_rules! continue_if {
     ( $source:ident, $seen:expr ) => {
-        peak!($source)
+        $source
+            .peak()
             .map(|v| v.to_uppercase())
             .filter(|v| v == $seen)
             .inspect(|_| consume!($source))
             .is_some()
     };
 }
+pub(crate) use continue_if;
 
 // consume_next will consume the next token if it is the expected type
 // This function is not case sensative. If the token is something else
 // an error is returned
 macro_rules! consume_next {
     ( $source:ident, $expected:expr ) => {
-        must_token!($source).and_then(|v| {
+        crate::parser::must_token!($source).and_then(|v| {
             if v.to_uppercase() == $expected {
                 Ok(())
             } else {
-                Err(Error::with_history(
+                Err(crate::Error::with_history(
                     &format!("expected \"{}\" but got \"{}\"", $expected, v),
                     $source.history(),
                 ))
@@ -151,23 +137,35 @@ macro_rules! consume_next {
         })
     };
 }
+pub(crate) use consume_next;
 
 // TODO: this is stupid, and we need to change this to a parser
 // builder
 impl<'a> From<&'a str> for Parser<'a> {
     fn from(s: &'a str) -> Parser<'a> {
         Parser {
-            lex: Lexer::from(s),
+            lex: RefCell::new(Lexer::from(s)),
         }
     }
 }
 
 impl<'a> Parser<'a> {
+    // peak is a shortcut for self.lex.peak and it returns the next
+    // token from the tokenizer without consuming it
+    pub fn peak(&self) -> Option<&str> {
+        self.lex.borrow_mut().peak()
+    }
+
+    // token returns the next token from the tokenizer, it *does* consume
+    // the token, moving the head forward.
+    pub fn token(&self) -> Option<&str> {
+        self.lex.borrow_mut().token()
+    }
     // consumed returns a History object, which lets the caller know where
     // the head of the lexor is. This is useful for creating error messages
     // since you can point out where problems are
     pub fn history(&self) -> History {
-        History::new(self.lex.consumed(), self.lex.future())
+        History::new(self.lex.borrow().consumed(), self.lex.borrow().future())
     }
 
     // parse_identifier allows you to parse a string with an optional wrapping
@@ -202,18 +200,18 @@ impl<'a> Parser<'a> {
     }
 
     // expression parses an expression, returning it as a Box<dyn Expression>
-    pub fn expression(&mut self) -> Result<Expr> {
+    pub fn expression(&self) -> Result<Expr> {
         self.parse_expression_add()
     }
 
     // parse_expression_add makes it possible to support `Order Of Operations`.
     // This function handles adding and subtracting linearly, and passes lower
     // scopes into the multiply function
-    fn parse_expression_add(&mut self) -> Result<Expr> {
+    fn parse_expression_add(&self) -> Result<Expr> {
         let mut expr = self.parse_expression_multiply()?;
 
         loop {
-            let next = peak!(self).unwrap_or_default();
+            let next = self.peak().unwrap_or_default();
             match next {
                 ADD => {
                     consume!(self);
@@ -235,11 +233,11 @@ impl<'a> Parser<'a> {
     // parse_expression_multiply makes it possible to support `Order Of Operations`.
     // This function handles multipling, dividing, remainder linearly, and passes lower
     // scopes into the exponent function
-    fn parse_expression_multiply(&mut self) -> Result<Expr> {
+    fn parse_expression_multiply(&self) -> Result<Expr> {
         let mut expr = self.parse_expression_exponent()?;
 
         loop {
-            let next = peak!(self).unwrap_or_default();
+            let next = self.peak().unwrap_or_default();
             match next {
                 MULTIPLY => {
                     consume!(self);
@@ -266,11 +264,11 @@ impl<'a> Parser<'a> {
     // parse_expression_exponent makes it possible to support `Order Of Operations`.
     // This function handles exponents linearly, and passes execution into the
     // parse_expression function
-    fn parse_expression_exponent(&mut self) -> Result<Expr> {
+    fn parse_expression_exponent(&self) -> Result<Expr> {
         let mut expr = self.parse_expression()?;
 
         loop {
-            let next = peak!(self).unwrap_or_default();
+            let next = self.peak().unwrap_or_default();
             match next {
                 EXPONENT => {
                     consume!(self);
@@ -287,8 +285,8 @@ impl<'a> Parser<'a> {
     // parse_expression is used to parse expressions without evaluating math
     // in other words this handles all the things you would expect `expression`
     // to handle if you didn't have to deal with math.
-    fn parse_expression(&mut self) -> Result<Expr> {
-        let left = peak!(self).unwrap_or_default();
+    fn parse_expression(&self) -> Result<Expr> {
+        let left = self.peak().unwrap_or_default();
 
         match left.to_uppercase().as_str() {
             SUB_EXPR_OPEN => {
@@ -316,8 +314,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_unwrapped_expression(&mut self) -> Result<Expr> {
-        let mut chars = peak!(self).unwrap_or_default().chars();
+    fn parse_unwrapped_expression(&self) -> Result<Expr> {
+        let mut chars = self.peak().unwrap_or_default().chars();
         match chars.next() {
             Some('0'..='9') | Some('-') => Ok(Expr::from(self.number_literal()?)),
             // _ => Ok(Box::new(PathExpression::from_parser(self)?)),
@@ -326,13 +324,13 @@ impl<'a> Parser<'a> {
     }
 
     // null parses and returns a null expression
-    fn null(&mut self) -> Result<NullExpression> {
+    fn null(&self) -> Result<NullExpression> {
         consume_next!(self, NULL)?;
         Ok(NullExpression::default())
     }
 
     // string_literal parses and returns a string literal
-    fn string_literal(&mut self) -> Result<StringLiteral> {
+    fn string_literal(&self) -> Result<StringLiteral> {
         consume_next!(self, STRING_WRAP)?;
 
         // check for an empty string
@@ -347,7 +345,7 @@ impl<'a> Parser<'a> {
     }
 
     // number_literal parses and returns a number literal
-    fn number_literal(&mut self) -> Result<NumberLiteral> {
+    fn number_literal(&self) -> Result<NumberLiteral> {
         let tok = must_token!(self)?;
         let chars = tok.chars();
 
@@ -366,7 +364,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn bool_literal(&mut self) -> Result<BoolLiteral> {
+    fn bool_literal(&self) -> Result<BoolLiteral> {
         let value = must_token!(self)?.to_uppercase();
 
         Ok(BoolLiteral::from(match value.as_str() {
@@ -381,7 +379,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn map_literal(&mut self) -> Result<MapLiteral> {
+    fn map_literal(&self) -> Result<MapLiteral> {
         consume_next!(self, MAP_WRAP)?;
 
         let mut map = HashMap::new();
@@ -408,7 +406,7 @@ impl<'a> Parser<'a> {
         Ok(MapLiteral::from(map))
     }
 
-    fn list_literal(&mut self) -> Result<ListLiteral> {
+    fn list_literal(&self) -> Result<ListLiteral> {
         consume_next!(self, ARRAY_WRAP)?;
 
         let mut list = Vec::new();

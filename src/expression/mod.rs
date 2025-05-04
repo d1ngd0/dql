@@ -7,7 +7,7 @@ pub use math::*;
 use std::fmt::{Debug, Display};
 pub use string::*;
 
-use crate::{Any, Container, error::Result};
+use crate::{Any, Container, Parser, error::Result};
 
 // Expression is a trait that takes in a dapt packet and returns an
 // optional value. This value can be Any type, which is what a dapt packet
@@ -50,6 +50,13 @@ macro_rules! expr_impl {
     };
 }
 
+impl<'a> TryFrom<&Parser<'a>> for Expr {
+    type Error = crate::Error;
+    fn try_from(value: &Parser<'a>) -> std::result::Result<Self, Self::Error> {
+        value.expression()
+    }
+}
+
 expr_impl!(
     StringLiteral,
     NumberLiteral,
@@ -69,14 +76,14 @@ expr_impl!(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Str, parser::Parser};
+    use crate::parser::Parser;
     use serde_json::Value;
 
     impl Container for Value {}
 
     macro_rules! assert_expression {
         ( $source:expr, $expr:expr, $expected:expr) => {
-            let mut parser = Parser::from($expr);
+            let parser = Parser::from($expr);
             let expr = parser.expression()?;
             let d: Any = serde_json::from_str($source).unwrap();
             let result = expr.evaluate(&d)?;
@@ -103,6 +110,7 @@ mod test {
         assert_expression!(r#"{}"#, "false", "false");
         assert_expression!(r#"{}"#, "{'something': true}", r#"{"something":true}"#);
         assert_expression!(r#"{}"#, "['something', 12]", r#"["something",12]"#);
+        assert_expression!(r#"{}"#, "to_upper('something')", r#""SOMETHING""#);
 
         Ok(())
     }

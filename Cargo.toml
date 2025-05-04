@@ -6,6 +6,7 @@ license = "MIT"
 description = "data agnostic query language"
 
 [dependencies]
+dql_derive = { version = "0.1.0", path = "dql_derive" }
 dyn-clone = "1.0.19"
 parse_duration = "2.1.1"
 serde = "1.0.219"

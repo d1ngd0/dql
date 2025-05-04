@@ -42,7 +42,11 @@ macro_rules! impl_any_from {
                 Any::$variant(value.into())
             }
         }
+    };
+}
 
+macro_rules! impl_any_try_from {
+    ($type:ty, $variant:ident) => {
         impl<'a> TryFrom<Any<'a>> for $type {
             type Error = Error;
 
@@ -56,25 +60,49 @@ macro_rules! impl_any_from {
     };
 }
 impl_any_from!(Number, Number);
+impl_any_try_from!(Number, Number);
 impl_any_from!(usize, Number);
+impl_any_try_from!(usize, Number);
 impl_any_from!(u64, Number);
+impl_any_try_from!(u64, Number);
 impl_any_from!(u32, Number);
+impl_any_try_from!(u32, Number);
 impl_any_from!(u16, Number);
+impl_any_try_from!(u16, Number);
 impl_any_from!(u8, Number);
+impl_any_try_from!(u8, Number);
 impl_any_from!(isize, Number);
+impl_any_try_from!(isize, Number);
 impl_any_from!(i64, Number);
+impl_any_try_from!(i64, Number);
 impl_any_from!(i32, Number);
+impl_any_try_from!(i32, Number);
 impl_any_from!(i16, Number);
+impl_any_try_from!(i16, Number);
 impl_any_from!(i8, Number);
+impl_any_try_from!(i8, Number);
 impl_any_from!(f64, Number);
+impl_any_try_from!(f64, Number);
 impl_any_from!(f32, Number);
+impl_any_try_from!(f32, Number);
 impl_any_from!(Str<'a>, Str);
+impl_any_try_from!(Str<'a>, Str);
 impl_any_from!(String, Str);
+impl_any_try_from!(String, Str);
+impl_any_from!(&'a String, Str);
+impl_any_from!(&'a str, Str);
 impl_any_from!(Bytes<'a>, Bytes);
+impl_any_try_from!(Bytes<'a>, Bytes);
 impl_any_from!(Vec<u8>, Bytes);
+impl_any_try_from!(Vec<u8>, Bytes);
+impl_any_from!(&'a Vec<u8>, Bytes);
+impl_any_from!(&'a [u8], Bytes);
 impl_any_from!(bool, Bool);
+impl_any_try_from!(bool, Bool);
 impl_any_from!(Vec<Any<'a>>, List);
+impl_any_try_from!(Vec<Any<'a>>, List);
 impl_any_from!(HashMap<Str<'a>, Any<'a>>, Map);
+impl_any_try_from!(HashMap<Str<'a>, Any<'a>>, Map);
 
 impl<'a> TryFrom<&'a Any<'a>> for &'a str {
     type Error = Error;
@@ -314,7 +342,7 @@ macro_rules! impl_string_from {
 
 impl_string_from!(Vec<u8>, Bytes);
 impl_string_from!(&'a [u8], Ref);
-impl_string_from!(&'a &Vec<u8>, Ref);
+impl_string_from!(&'a Vec<u8>, Ref);
 
 impl<'a> Bytes<'a> {
     // as_str returns a reference to the underlying string

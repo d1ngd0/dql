@@ -1,18 +1,11 @@
-use std::fmt::Display;
-
-use crate::Any;
-
 use super::{Expr, Expression};
+use crate::Any;
+use dql_derive::Function;
 
-#[derive(Expression, Clone, Debug)]
+#[derive(Function, Clone, Debug)]
+#[function(name = "to_upper")]
 pub struct ToUpper {
     value: Expr,
-}
-
-impl Display for ToUpper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TODO")
-    }
 }
 
 impl Expression for ToUpper {

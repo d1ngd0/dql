@@ -1,0 +1,14 @@
+[lib]
+proc-macro = true
+
+[package]
+name = "dql_derive"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+syn = { version = "1.0", features = ["full"] }
+quote = "1.0"
+convert_case = "0.8.0"
+darling = "0.13"
+proc-macro2 = "1.0.95"
