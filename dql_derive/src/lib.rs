@@ -91,11 +91,9 @@ fn impl_parse_field(field: Field, opts: FieldOpts) -> Option<(Ident, proc_macro2
     if opts.ignore {
         return None;
     }
-    let Type::Path(path) = field.ty else {
-        unimplemented!();
-    };
 
     let name = field.ident?.clone();
+    let path = field.ty;
 
     Some((
         name.clone(),
